@@ -189,3 +189,22 @@ def test_blink_requires_both_eyes_to_close_and_reopen_on_valid_frames():
     assert not tracker.update((.04, .05))
     assert not tracker.update((.8, .9))
     assert tracker.update((.04, .05))
+
+
+def test_presence_describes_geometry_only_for_one_face(tmp_path, monkeypatch):
+    vision = use_test_frames(monkeypatch)
+    frame = np.zeros((480, 640, 3), np.uint8)
+    monkeypatch.setattr(main.Camera, "latest_frame", lambda self: frame, raising=False)
+    vision.detect_faces = lambda image: np.array([[160, 120, 120, 120]])
+    with TestClient(create_app(tmp_path)) as client:
+        response = client.get("/api/presence")
+        assert response.status_code == 200
+        assert response.json() == {
+            "count": 1, "width": 640, "height": 480,
+            "face": {"x": .25, "y": .25, "width": .1875, "height": .25},
+            "ready": True,
+        }
+        vision.detect_faces = lambda image: np.array([[160, 120, 120, 120], [400, 100, 100, 100]])
+        presence = client.get("/api/presence").json()
+        assert presence["count"] == 2 and presence["face"] is None and not presence["ready"]
+        assert client.get("/api/attempts").json() == []

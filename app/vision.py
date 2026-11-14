@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from math import exp, isfinite
 from pathlib import Path
+from threading import Lock
 from time import monotonic
 
 import cv2
@@ -115,6 +116,7 @@ class Vision:
         self.landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(options)
 
         cv2.setNumThreads(2)
+        self._detector_lock = Lock()
         self.detector = cv2.FaceDetectorYN.create(str(model_dir / "yunet.onnx"), "", (640, 480))
         self.recognizer = cv2.FaceRecognizerSF.create(str(model_dir / "sface.onnx"), "")
         options = ort.SessionOptions()
@@ -188,12 +190,17 @@ class Vision:
         odds = exp(margin)
         return odds / (1 + odds)
 
+    def detect_faces(self, frame):
+        height, width = frame.shape[:2]
+        with self._detector_lock:
+            self.detector.setInputSize((width, height))
+            _, faces = self.detector.detect(frame)
+        return faces
+
     def analyze(self, frame, timings, check_deadline):
         check_deadline()
         with timings.measure("detect"):
-            height, width = frame.shape[:2]
-            self.detector.setInputSize((width, height))
-            _, faces = self.detector.detect(frame)
+            faces = self.detect_faces(frame)
             if faces is None or len(faces) == 0:
                 return FrameAnalysis(False, "no_face")
             if len(faces) != 1:

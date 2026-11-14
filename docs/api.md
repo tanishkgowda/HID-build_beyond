@@ -23,6 +23,7 @@ All three teammates build against this file. If anything here needs to change, a
 | `GET /api/health` | — | `{models_loaded, camera_running, model_versions: {detector, recognizer, liveness}}` |
 | `POST /api/camera/start` | `{device_index?: number}` | `{running: true, device_index}` |
 | `POST /api/camera/stop` | — | `{running: false}` |
+| `GET /api/presence` | — | `{count, width, height, face, ready}`. A single valid face has normalized `{x, y, width, height}` coordinates. A missing or crowded frame has `face: null`. |
 | `GET /api/preview` | — | MJPEG stream. Returns `409 camera_unavailable` if the camera is not running |
 | `GET /api/participants` | — | `[{participant_id, name, enrolled_at}]` |
 | `POST /api/enroll` | `{name, participant_id?}` | `{participant_id, name, frames_used, liveness_ok}`. Returns `422 spoof_detected` if the enrollment frames fail liveness |
@@ -60,6 +61,10 @@ All three teammates build against this file. If anything here needs to change, a
 - If any single frame has a definitive spoof score, the outcome is `DENY` with reason `spoof_detected`.
 - Liveness passes only if all three frames pass. The attempt's `liveness_score` is the lowest frame score.
 - The attempt's `match_score` is the mean of the three frame scores against the enrolled template.
+
+## Walk-up verification
+
+With the camera on, the kiosk uses presence to draw its face guide and starts one verification when a single face is in range. The operator selects the enrolled participant beforehand. The kiosk resets after an empty frame persists briefly. Opening Operator tools pauses automatic checks. The existing `click_to_render_ms` field measures attempt start to result for automatic and manual checks.
 
 ## Blink check
 

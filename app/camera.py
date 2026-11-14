@@ -102,6 +102,12 @@ class Camera:
                 self._changed.wait(remaining)
         raise CameraUnavailable("Start the camera before capturing frames.")
 
+    def latest_frame(self):
+        with self._changed:
+            if self._latest is None or self._stop.is_set() or monotonic() - self._latest[0] > 0.5:
+                return None
+            return self._latest[1]
+
     def sample(self, count, deadline):
         frames = []
         after = monotonic()

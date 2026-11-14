@@ -63,6 +63,14 @@ export interface Health {
   model_versions: { detector: string; recognizer: string; liveness: string };
 }
 
+export interface Presence {
+  count: number;
+  width: number;
+  height: number;
+  face: { x: number; y: number; width: number; height: number } | null;
+  ready: boolean;
+}
+
 export interface CameraStarted {
   running: true;
   device_index: number;
@@ -161,6 +169,7 @@ export class ApiError extends Error {
 
 export interface KioskApi {
   health(): Promise<Health>;
+  presence(): Promise<Presence>;
   startCamera(deviceIndex?: number): Promise<CameraStarted>;
   stopCamera(): Promise<CameraStopped>;
   /** URL for the MJPEG <img>. `nonce` forces a fresh stream connection after a restart. */
@@ -220,6 +229,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 
 const realApi: KioskApi = {
   health: () => request<Health>('GET', '/health'),
+  presence: () => request<Presence>('GET', '/presence'),
   startCamera: (deviceIndex) =>
     request<CameraStarted>(
       'POST',

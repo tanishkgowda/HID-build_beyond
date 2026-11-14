@@ -27,11 +27,11 @@ from .policy import (
 )
 from .schemas import (
     Attempt, AttemptReference, CameraStart, CameraStarted, CameraStopped,
-    ClientTiming, Enrollment, EnrollmentRequest, FrameEvidence, Health, Participant,
+    ClientTiming, Enrollment, EnrollmentRequest, FrameEvidence, Health, Participant, Presence, FaceBox,
     ScenarioUpdate, ScenarioUpdated, SecondCheck, SecondCheckRequest, StageTimes, VerificationRequest,
 )
 from .store import Store
-from .vision import MODEL_VERSIONS, Vision, unit_embedding
+from .vision import MIN_FACE_PIXELS, MIN_VISIBLE_FACE_FRACTION, MODEL_VERSIONS, Vision, unit_embedding
 
 ROOT = Path(__file__).resolve().parents[1]
 ATTEMPT_DEADLINE_MS = 1800
@@ -255,6 +255,30 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
             camera.preview(), media_type="multipart/x-mixed-replace; boundary=frame",
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/api/presence", response_model=Presence)
+    def presence():
+        frame = camera.latest_frame()
+        if frame is None:
+            return Presence()
+        height, width = frame.shape[:2]
+        # The arrival guide needs geometry only. YuNet serializes access internally.
+        faces = loaded_vision().detect_faces(frame)
+        count = 0 if faces is None else len(faces)
+        response = Presence(count=count, width=width, height=height)
+        if count == 1 and np.isfinite(faces[0, :4]).all():
+            x, y, w, h = map(float, faces[0, :4])
+            left, top = max(0, x), max(0, y)
+            right, bottom = min(width, x + w), min(height, y + h)
+            if right > left and bottom > top:
+                response.face = FaceBox(x=left / width, y=top / height,
+                                        width=(right - left) / width, height=(bottom - top) / height)
+                response.ready = (
+                    min(w, h) >= MIN_FACE_PIXELS
+                    and (right - left) * (bottom - top) >= MIN_VISIBLE_FACE_FRACTION * w * h
+                    and 0.15 <= (x+w/2)/width <= 0.85 and 0.12 <= (y+h/2)/height <= 0.88
+                )
+        return response
 
     @app.get("/api/participants", response_model=list[Participant])
     def participants():

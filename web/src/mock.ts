@@ -104,6 +104,12 @@ export function createMockApi(makeError: MakeError): KioskApi {
       };
     },
 
+    async presence() {
+      return cameraRunning
+        ? { count: 1, width: 640, height: 480, face: { x: .34, y: .18, width: .32, height: .57 }, ready: true }
+        : { count: 0, width: 0, height: 0, face: null, ready: false };
+    },
+
     async secondCheck() {
       throw makeError('jev_unavailable', 'Jev is unavailable in mock mode.', 503);
     },

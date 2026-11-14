@@ -22,6 +22,21 @@ class CameraStart(BaseModel):
     device_index: int = Field(default=0, ge=0, le=255, strict=True)
 
 
+class FaceBox(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class Presence(BaseModel):
+    count: int = 0
+    width: int = 0
+    height: int = 0
+    face: FaceBox | None = None
+    ready: bool = False
+
+
 class CameraStarted(BaseModel):
     running: Literal[True] = True
     device_index: int
