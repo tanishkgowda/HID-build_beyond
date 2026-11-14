@@ -1,9 +1,7 @@
 """TypeSafe Jev as the second verification step (experimental).
 
-Jev is a hosted typed-decision model. We send one webcam crop and ask a single choice
-question: is this a live person, a printed photo, or a screen (photo or video replay)?
-Image input is a TypeSafe "danger zone" feature, so results are measured before use and
-Jev can only resolve REQUEST_VERIFICATION. It never overrides a local DENY.
+Jev is a hosted typed-decision model. The full camera frame supports both a
+presentation classification and an independent phone or paper check.
 
 Standard library only, so it adds no dependency. Configure with environment variables:
   TYPESAFE_API_KEY   required
@@ -23,6 +21,9 @@ from urllib.request import Request, urlopen
 DEFAULT_URL = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-latest"
 QUESTION_ID = "presentation"
+OBJECT_QUESTION_ID = "visible_phone_or_paper"
+OBJECT_DENY = 0.55
+OBJECT_CLEAR_MAX = 0.25
 LIVE = "live_person"
 ATTACK_LABELS = ("printed_photo", "screen_or_video")
 LABELS = (LIVE, *ATTACK_LABELS, "unclear")
@@ -34,7 +35,7 @@ JEV_ATTACK_DENY = 0.85
 QUESTION = {
     "type": "choice",
     "instructions": (
-        "`photo` is a frame from an entry kiosk webcam, cropped around a face. Decide whether "
+        "The image is a full frame from an entry kiosk webcam. Decide whether "
         "the camera is seeing a real person who is physically present, or a presentation attack "
         "held up to the camera."
     ),
@@ -51,6 +52,23 @@ QUESTION = {
 }
 
 
+OBJECT_QUESTION = {
+    "type": "noul",
+    "instructions": (
+        "Inspect the entire camera image, including the edges and anything in a hand. "
+        "Is an actual mobile phone or loose sheet of paper visibly present anywhere? "
+        "Count phones with a lit, blank or rear-facing side, even partially visible or held "
+        "by a live person, and loose paper, prints or paper photo cutouts, whether blank or "
+        "printed. Count the object independently of whether the person looks live. "
+        "Do not infer an object from a hand alone or treat the image's own border as an object."
+    ),
+    "criteria": {
+        "true": "A visible phone or piece of paper anywhere in the frame, including in a hand.",
+        "false": "No visible phone or loose paper in the camera scene.",
+    },
+}
+
+
 @dataclass
 class JevResult:
     label: str | None = None
@@ -59,6 +77,7 @@ class JevResult:
     latency_ms: int = 0
     error: str | None = None
     model: str | None = None
+    object_probability: float | None = None
 
     @property
     def live_probability(self):
@@ -72,12 +91,18 @@ class JevResult:
 
     def outcome(self, live_pass=JEV_LIVE_PASS, attack_deny=JEV_ATTACK_DENY):
         """ALLOW / DENY / REQUEST_VERIFICATION from Jev alone. None if Jev failed."""
-        if self.error or not self.probabilities:
+        if self.error:
             return None
-        if (self.live_probability or 0) >= live_pass:
-            return "ALLOW"
+        if self.object_probability is not None and self.object_probability >= OBJECT_DENY:
+            return "DENY"
         if (self.attack_probability or 0) >= attack_deny:
             return "DENY"
+        if (
+            self.object_probability is not None
+            and self.object_probability <= OBJECT_CLEAR_MAX
+            and (self.live_probability or 0) >= live_pass
+        ):
+            return "ALLOW"
         return "REQUEST_VERIFICATION"
 
 
@@ -89,12 +114,17 @@ def build_request(jpeg_bytes, model):
             "type": "image", "format": "jpeg",
             "data_base64": base64.b64encode(jpeg_bytes).decode("ascii"),
         }},
-        "questions": {QUESTION_ID: QUESTION},
+        "questions": {OBJECT_QUESTION_ID: OBJECT_QUESTION, QUESTION_ID: QUESTION},
     }
 
 
 def parse_response(payload):
-    answer = payload["answers"][QUESTION_ID]
+    answers = payload["answers"]
+    object_answer = answers[OBJECT_QUESTION_ID]
+    object_probability = float(object_answer["noul"])
+    if object_answer.get("type") != "noul" or not 0 <= object_probability <= 1:
+        raise ValueError("Invalid Jev phone or paper probability")
+    answer = answers[QUESTION_ID]
     probabilities = {str(k): float(v) for k, v in (answer.get("probabilities") or {}).items()}
     if any(key not in LABELS or not isfinite(value) or not 0 <= value <= 1
            for key, value in probabilities.items()) or sum(probabilities.values()) > 1.01:
@@ -103,7 +133,7 @@ def parse_response(payload):
     if label not in LABELS:
         raise ValueError(f"Unexpected Jev choice: {label!r}")
     return JevResult(label=label, probabilities=probabilities, confidence=answer.get("confidence"),
-                     model=payload.get("model"))
+                     model=payload.get("model"), object_probability=object_probability)
 
 
 class JevClient:
@@ -140,23 +170,17 @@ class JevClient:
         return result
 
 
-def face_crop_jpeg(frame, box, scale=2.5, max_side=384, quality=85):
-    """Wide square crop around a YuNet box, so paper and screen edges stay in view."""
-    import cv2  # Imported here so the client works without OpenCV.
+def scene_jpeg(frame, max_side=640, quality=88):
+    """Encode the full frame so a phone or a sheet of paper stays in view."""
+    import cv2
 
-    x, y, w, h = (float(v) for v in box[:4])
-    side = scale * max(w, h)
-    cx, cy = x + w / 2, y + h / 2
     height, width = frame.shape[:2]
-    left, top = int(max(0, cx - side / 2)), int(max(0, cy - side / 2))
-    right, bottom = int(min(width, cx + side / 2)), int(min(height, cy + side / 2))
-    crop = frame[top:bottom, left:right]
-    longest = max(crop.shape[:2])
+    longest = max(height, width)
     if longest > max_side:
-        factor = max_side / longest
-        crop = cv2.resize(crop, (round(crop.shape[1] * factor), round(crop.shape[0] * factor)),
-                          interpolation=cv2.INTER_AREA)
-    ok, jpeg = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        scale = max_side / longest
+        frame = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))),
+                           interpolation=cv2.INTER_AREA)
+    ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
     if not ok:
-        raise ValueError("Could not encode the crop")
+        raise ValueError("Could not encode the camera frame")
     return jpeg.tobytes()

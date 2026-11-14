@@ -130,7 +130,7 @@ def test_jev_second_check_is_opt_in_matches_identity_and_runs_once(tmp_path, mon
 
     monkeypatch.setenv("TYPESAFE_API_KEY", "fixture")
     monkeypatch.setattr(main, "JevClient", Client, raising=False)
-    monkeypatch.setattr(main, "face_crop_jpeg", lambda frame, box: b"jpeg", raising=False)
+    monkeypatch.setattr(main, "scene_jpeg", lambda frame: b"jpeg")
 
     with TestClient(app) as client:
         assert client.post("/api/enroll", json={"name": "Teammate", "participant_id": PARTICIPANT_ID}).status_code == 200
@@ -178,3 +178,34 @@ def test_presence_describes_geometry_only_for_one_face(tmp_path, monkeypatch):
         presence = client.get("/api/presence").json()
         assert presence["count"] == 2 and presence["face"] is None and not presence["ready"]
         assert client.get("/api/attempts").json() == []
+
+
+def test_jev_mode_holds_local_allow_until_scene_check(tmp_path, monkeypatch):
+    from app.jev import JevResult
+
+    app = create_app(tmp_path)
+    use_test_frames(monkeypatch)
+    frame = np.zeros((480, 640, 3), np.uint8)
+    monkeypatch.setattr(main.Camera, "sample", lambda self, count, deadline: [frame] * count)
+    seen = []
+
+    class Client:
+        def check(self, jpeg):
+            import cv2
+
+            seen.append(cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR).shape)
+            return JevResult(label="live_person", probabilities={"live_person": .99}, object_probability=.92)
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "fixture")
+    monkeypatch.setattr(main, "JevClient", Client)
+    with TestClient(app) as client:
+        assert client.post("/api/enroll", json={"name": "Teammate", "participant_id": PARTICIPANT_ID}).status_code == 200
+        first = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID, "require_jev": True}).json()
+        assert first["outcome"] == "REQUEST_VERIFICATION"
+        assert first["reason"] == "jev_required"
+        assert seen == []
+        response = client.post(f"/api/attempts/{first['attempt_id']}/second_check", json={"consent": True})
+        assert response.status_code == 200, response.text
+        assert response.json()["outcome"] == "DENY"
+        assert response.json()["reason"] == "second_check_object_detected"
+        assert seen == [(480, 640, 3)]

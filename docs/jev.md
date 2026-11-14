@@ -1,19 +1,12 @@
-# Jev second verification step
+# Jev phone and paper check
 
-Jev is TypeSafe's hosted decision model. It returns a typed answer with probabilities instead of text. We use it on one webcam crop to ask: live person, printed photo, screen or video replay, or unclear. Image input is an experimental ("danger zone") TypeSafe feature, so we measure it before relying on it.
+Jev receives one fresh full camera frame after participant consent. It checks for any visible phone or loose paper, even when a live person is holding the object or the screen is blank. This signal overrides the presentation classifier. An uncertain result asks for another capture.
 
-## Where it fits
+## Start a check
 
-```
-Verify ──► local pipeline (< 2 s) ──► ALLOW / DENY ──► done
-                                  └─► REQUEST_VERIFICATION (uncertain_liveness, identity matched)
-                                          └─► Jev check on a fresh frame ──► DENY / ask to recapture
-```
+Start the backend with `TYPESAFE_API_KEY` set. With participant consent, turn on **Require Jev phone and paper check** in the kiosk. A local pass becomes `REQUEST_VERIFICATION` with reason `jev_required`, then the kiosk runs the scene check automatically. Local denials are final. The backend checks the selected identity again before sending the frame. A final Allow requires a local pass and a clear Jev result. An uncertain local liveness result can lead to a Deny or a recapture.
 
-- Jev runs only when the local result is `REQUEST_VERIFICATION` with reason `uncertain_liveness` and the identity score passed. It judges liveness, not identity.
-- Jev runs after the initial local decision. The hosted request has its own timer.
-- If Jev errors, times out or answers `unclear`, the kiosk keeps asking for a recapture.
-- Report the initial outcome time and the Jev step time separately, as for AWS Face Liveness.
+The initial local decision and the hosted result have separate timings. If TypeSafe is unavailable or times out, the kiosk keeps access pending. The evaluator lists Jev results separately from the initial local decisions.
 
 ## Step 1 — benchmark (C, Milestone 2)
 
@@ -32,14 +25,8 @@ Verify ──► local pipeline (< 2 s) ──► ALLOW / DENY ──► done
 
 Settings (environment variables): `TYPESAFE_API_KEY`, `JEV_MODEL` (default `jev-latest`), `JEV_URL` (default `https://api.typesafe.ai/v1/systemone`), `JEV_TIMEOUT_MS` (default 1500).
 
-## Run the second check in the kiosk
+## API and camera data
 
-Start the backend with `TYPESAFE_API_KEY` set. The kiosk shows **Consent and run Jev** after a fresh local attempt with uncertain liveness and a matching identity. The button sends one crop to TypeSafe only after consent. The backend verifies the identity again and allows one check per attempt, within 60 seconds.
+`POST /api/verify` accepts `require_jev: true`. An eligible attempt can call `POST /api/attempts/{attempt_id}/second_check` with `{"consent": true}` once, within 60 seconds. The result includes the phone or paper probability, the Jev model and label, outcome and reason, and timing. The database stores scores and timings.
 
-A strong spoof result can deny the second check. A result that looks live still asks for a recapture until the team measures how this model handles real attacks. The kiosk shows both timings, and the evaluator reports the second check separately from the original local decision.
-
-The extension adds `POST /api/attempts/{attempt_id}/second_check` with `{"consent": true}`, `jev_enabled` in health, and a nullable `second_check` result on saved attempts. The result has the Jev label, live probability, resolved model, separate outcome and reason, total time, and TypeSafe request time. The original outcome and timing stay intact. The key is only read by the backend, and local verification remains available without it.
-
-## Privacy
-
-Face crops leave the laptop and go to TypeSafe's API. Tell participants before they take part, and only run the bench and the kiosk step with consenting teammates. TypeSafe states it does not use requests to train Jev. Keep the API key out of Git (`.env` is already ignored).
+Only run hosted checks with consenting teammates. The full frame, including background, goes to TypeSafe. Keep the key out of Git.

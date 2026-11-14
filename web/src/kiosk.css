@@ -207,3 +207,5 @@
 @media (prefers-reduced-motion: reduce) {
   .tracking-ring { transition: none; }
 }
+
+.jev-option input { padding: 0; margin: 0; width: 18px; height: 18px; accent-color: var(--kiosk-blue); }

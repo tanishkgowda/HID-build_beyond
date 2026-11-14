@@ -34,6 +34,7 @@ export const REASONS = [
   'not_enrolled',
   'camera_unavailable',
   'blink_required',
+  'jev_required',
 ] as const;
 export type Reason = (typeof REASONS)[number];
 
@@ -116,9 +117,11 @@ export interface SecondCheck {
   jev_label: string | null;
   jev_live_probability: number | null;
   model: string | null;
-  outcome: 'DENY' | 'REQUEST_VERIFICATION';
+  outcome: Outcome;
+  object_probability?: number | null;
   reason: 'second_check_spoof' | 'second_check_recapture' |
-    'second_check_unavailable' | 'second_check_identity_unconfirmed';
+    'second_check_unavailable' | 'second_check_identity_unconfirmed' |
+    'second_check_object_detected' | 'second_check_passed';
   second_check_ms: number;
   jev_ms: number | null;
 }
@@ -176,7 +179,7 @@ export interface KioskApi {
   previewUrl(nonce: number): string;
   participants(): Promise<Participant[]>;
   enroll(name: string, participantId?: string): Promise<EnrollResult>;
-  verify(participantId: string): Promise<Attempt>;
+  verify(participantId: string, requireJev?: boolean): Promise<Attempt>;
   secondCheck(attemptId: string): Promise<SecondCheck>;
   attempts(limit?: number): Promise<Attempt[]>;
   setScenario(attemptId: string, scenario: Scenario): Promise<ScenarioResult>;
@@ -245,8 +248,8 @@ const realApi: KioskApi = {
       '/enroll',
       participantId === undefined ? { name } : { name, participant_id: participantId },
     ),
-  verify: (participantId) =>
-    request<Attempt>('POST', '/verify', { participant_id: participantId }),
+  verify: (participantId, requireJev = false) =>
+    request<Attempt>('POST', '/verify', { participant_id: participantId, require_jev: requireJev }),
   secondCheck: (attemptId) =>
     request<SecondCheck>('POST', `/attempts/${encodeURIComponent(attemptId)}/second_check`, { consent: true }),
   attempts: (limit = 50) => request<Attempt[]>('GET', `/attempts?limit=${limit}`),

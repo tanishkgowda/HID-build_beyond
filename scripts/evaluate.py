@@ -170,6 +170,7 @@ def summarize_jev(attempts):
         if checks:
             result[scenario] = {
                 "n": len(checks),
+                "allowed": sum(c["outcome"] == "ALLOW" for c in checks),
                 "denied": sum(c["outcome"] == "DENY" for c in checks),
                 "recapture": sum(c["outcome"] == "REQUEST_VERIFICATION" for c in checks),
                 "second_check_ms": latency([c["second_check_ms"] for c in checks]),
@@ -305,12 +306,12 @@ def markdown(report, source, sweeps=None):
 
     if report["jev_second_checks"]:
         w("## Jev second checks\n")
-        w("| Scenario | Checks | Deny | Recapture | Total ms median / p95 / max | TypeSafe ms median / p95 / max |")
-        w("| --- | ---: | ---: | ---: | --- | --- |")
+        w("| Scenario | Checks | Allow | Deny | Recapture | Total ms median / p95 / max | TypeSafe ms median / p95 / max |")
+        w("| --- | ---: | ---: | ---: | ---: | --- | --- |")
         for name, g in report["jev_second_checks"].items():
             total = " / ".join(ms(g["second_check_ms"][metric]) for metric in ("median", "p95", "max"))
             hosted = " / ".join(ms(g["jev_ms"][metric]) for metric in ("median", "p95", "max"))
-            w(f"| {name} | {g['n']} | {g['denied']} | {g['recapture']} | {total} | {hosted} |")
+            w(f"| {name} | {g['n']} | {g['allowed']} | {g['denied']} | {g['recapture']} | {total} | {hosted} |")
         w("")
 
     w("## By scenario\n")
@@ -373,7 +374,7 @@ def write_csv(path, attempts):
               "reason", "liveness_score", "match_score", "elapsed_ms", "deadline_missed",
               "click_to_render_ms", "ui_deadline_missed", "capture_ms", "detect_ms", "liveness_ms",
               "match_ms", "policy_ms", "frame_liveness", "frame_match",
-              "second_check_outcome", "second_check_reason", "second_check_ms", "jev_ms", "jev_label", "jev_live_probability"]
+              "second_check_outcome", "second_check_reason", "second_check_ms", "jev_ms", "jev_label", "jev_live_probability", "object_probability"]
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
@@ -387,7 +388,7 @@ def write_csv(path, attempts):
                                           for f in a["frames"])
             check = a.get("second_check") or {}
             row.update(second_check_outcome=check.get("outcome"), second_check_reason=check.get("reason"))
-            for field in ("second_check_ms", "jev_ms", "jev_label", "jev_live_probability"):
+            for field in ("second_check_ms", "jev_ms", "jev_label", "jev_live_probability", "object_probability"):
                 row[field] = check.get(field)
             writer.writerow(row)
 

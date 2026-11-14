@@ -20,7 +20,7 @@ from starlette.exceptions import HTTPException
 import numpy as np
 
 from .camera import Camera, CameraUnavailable
-from .jev import JevClient, face_crop_jpeg
+from .jev import JevClient, OBJECT_DENY, scene_jpeg
 from .policy import (
     Decision, FRAME_COUNT, LIVE_PASS, MATCH_PASS, MISMATCH_DENY, SPOOF_DENY,
     decide_frames, valid_liveness, valid_match,
@@ -346,6 +346,8 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
             deadline_missed = True
             decision, live, match = decide_frames([], timed_out=True)
             frames = []
+        if body.require_jev and decision.outcome == "ALLOW":
+            decision = Decision("REQUEST_VERIFICATION", "jev_required")
         attempt = Attempt(
             attempt_id=str(uuid4()),
             participant_id=body.participant_id,
@@ -365,7 +367,7 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
     @app.post("/api/attempts/{attempt_id}/second_check", response_model=SecondCheck)
     def second_check(attempt_id: str, body: SecondCheckRequest):
         if body.consent is not True:
-            raise ApiError(422, "consent_required", "Confirm that the camera crop may be sent to TypeSafe.")
+            raise ApiError(422, "consent_required", "Confirm that the full camera frame may be sent to TypeSafe.")
         client = app.state.jev
         if client is None:
             raise ApiError(503, "jev_unavailable", "Jev is not configured on this kiosk.")
@@ -385,7 +387,7 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(source["created_at"])).total_seconds()
         if (
             source["outcome"] != "REQUEST_VERIFICATION"
-            or source["reason"] != "uncertain_liveness"
+            or source["reason"] not in {"uncertain_liveness", "jev_required"}
             or not valid_match(source["match_score"])
             or source["match_score"] < MATCH_PASS
             or source["ui_deadline_missed"]
@@ -401,6 +403,7 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
             reason = "second_check_unavailable"
             outcome = "REQUEST_VERIFICATION"
             jpeg = None
+            fresh_liveness = None
             try:
                 deadline = monotonic() + 1
                 frame, = camera.sample(1, deadline)
@@ -412,8 +415,9 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
                     elif valid_liveness(reading.liveness_score) and reading.liveness_score <= SPOOF_DENY:
                         reason = "second_check_spoof"
                         outcome = "DENY"
-                    elif valid_liveness(reading.liveness_score) and reading.face_box is not None:
-                        jpeg = face_crop_jpeg(frame, reading.face_box)
+                    elif valid_liveness(reading.liveness_score):
+                        fresh_liveness = reading.liveness_score
+                        jpeg = scene_jpeg(frame)
                 elif reading.embedding is None and reading.issue is None:
                     reason = "second_check_identity_unconfirmed"
             except (CameraUnavailable, TimeoutError):
@@ -422,9 +426,13 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
         # The hosted call does not own the camera. The original attempt stays intact.
         result = client.check(jpeg) if jpeg is not None else None
         if result is not None and not result.error:
-            if result.outcome() == "DENY":
-                reason = "second_check_spoof"
-                outcome = "DENY"
+            verdict = result.outcome()
+            if result.object_probability is not None and result.object_probability >= OBJECT_DENY:
+                reason, outcome = "second_check_object_detected", "DENY"
+            elif verdict == "DENY":
+                reason, outcome = "second_check_spoof", "DENY"
+            elif verdict == "ALLOW" and source["reason"] == "jev_required" and fresh_liveness >= LIVE_PASS:
+                reason, outcome = "second_check_passed", "ALLOW"
             else:
                 reason = "second_check_recapture"
         live_probability = result.live_probability if result is not None else None
@@ -432,6 +440,7 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
             attempt_id=attempt_id, outcome=outcome, reason=reason,
             jev_label=result.label if result is not None else None,
             jev_live_probability=live_probability if valid_liveness(live_probability) else None,
+            object_probability=result.object_probability if result is not None else None,
             model=result.model if result is not None else None,
             jev_ms=result.latency_ms if result is not None else None,
             second_check_ms=round((monotonic() - start) * 1000),

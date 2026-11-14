@@ -1,6 +1,6 @@
 """Measure Jev as the second verification step, scenario by scenario (Person C).
 
-Grabs a frame, crops around the face, asks Jev whether it is a live person or an attack,
+Grabs a full frame, asks Jev about phones, paper and presentation attacks,
 and appends one row to results/jev/jev_attempts.csv. No images are saved: only labels,
 probabilities and latency. Run from the project root with TYPESAFE_API_KEY set.
 
@@ -28,7 +28,7 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.jev import ATTACK_LABELS, LABELS, JevClient, face_crop_jpeg  # noqa: E402
+from app.jev import ATTACK_LABELS, LABELS, JevClient, scene_jpeg  # noqa: E402
 from scripts.evaluate import ATTACKS, SCENARIOS, percentile  # noqa: E402
 
 OUT = ROOT / "results" / "jev"
@@ -97,7 +97,7 @@ def measure(frame, scenario, source, vision, client):
         row["face_issue"] = issue
         return row
     row["local_liveness"] = f"{vision._live_score(_liveness_input(frame, face)):.4f}"
-    jpeg = face_crop_jpeg(frame, face)
+    jpeg = scene_jpeg(frame)
     row["crop_bytes"] = len(jpeg)
     result = client.check(jpeg)
     row.update({"jev_label": result.label, "jev_outcome": result.outcome(), "latency_ms": result.latency_ms,

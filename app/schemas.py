@@ -6,7 +6,7 @@ Outcome = Literal["ALLOW", "REQUEST_VERIFICATION", "DENY"]
 Reason = Literal[
     "live_match", "spoof_detected", "identity_mismatch", "no_face",
     "multiple_faces", "poor_quality", "uncertain_liveness", "uncertain_match",
-    "deadline_exceeded", "not_enrolled", "camera_unavailable", "blink_required",
+    "deadline_exceeded", "not_enrolled", "camera_unavailable", "blink_required", "jev_required",
 ]
 Scenario = Literal[
     "unlabeled", "genuine", "wrong_identity", "print_photo", "screen_photo",
@@ -73,6 +73,7 @@ class Enrollment(BaseModel):
 
 class VerificationRequest(BaseModel):
     participant_id: Identifier
+    require_jev: bool = Field(default=False, strict=True)
 
 
 class Participant(BaseModel):
@@ -141,10 +142,11 @@ class SecondCheck(AttemptReference):
     jev_label: str | None = None
     jev_live_probability: LivenessScore | None = None
     model: str | None = None
-    outcome: Literal["DENY", "REQUEST_VERIFICATION"]
+    outcome: Outcome
+    object_probability: LivenessScore | None = None
     reason: Literal[
         "second_check_spoof", "second_check_recapture", "second_check_unavailable",
-        "second_check_identity_unconfirmed",
+        "second_check_identity_unconfirmed", "second_check_object_detected", "second_check_passed",
     ]
     second_check_ms: Milliseconds
     jev_ms: Milliseconds | None = None

@@ -11,7 +11,8 @@ from app import jev
 def answer(choice, probabilities):
     return {"model": "jev-1.14.0", "answers": {jev.QUESTION_ID: {
         "type": "choice", "choice": choice, "probabilities": probabilities, "confidence": 0.9,
-    }}, "usage": {"input_tokens": 300, "output_tokens": 1}}
+    }, jev.OBJECT_QUESTION_ID: {"type": "noul", "noul": .04}},
+        "usage": {"input_tokens": 300, "output_tokens": 1}}
 
 
 @pytest.fixture
@@ -85,10 +86,16 @@ def test_missing_key_is_reported(monkeypatch):
         jev.JevClient()
 
 
-def test_face_crop_is_a_bounded_jpeg():
+def test_scene_jpeg_preserves_the_full_frame():
     np = pytest.importorskip("numpy")
     cv2 = pytest.importorskip("cv2")
     frame = np.random.default_rng(0).integers(0, 255, (480, 640, 3), dtype=np.uint8)
-    data = jev.face_crop_jpeg(frame, [280, 200, 100, 120])
+    data = jev.scene_jpeg(frame, max_side=320)
     crop = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-    assert data[:2] == b"\xff\xd8" and max(crop.shape[:2]) <= 384
+    assert data[:2] == b"\xff\xd8" and crop.shape[:2] == (240, 320)
+
+
+def test_visible_phone_or_paper_overrides_a_high_live_score():
+    payload = answer("live_person", {"live_person": .98})
+    payload["answers"]["visible_phone_or_paper"] = {"type": "noul", "noul": .91}
+    assert jev.parse_response(payload).outcome() == "DENY"

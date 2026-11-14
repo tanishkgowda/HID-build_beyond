@@ -13,7 +13,7 @@ All three teammates build against this file. If anything here needs to change, a
 | Field | Allowed values |
 | --- | --- |
 | `outcome` | `ALLOW`, `REQUEST_VERIFICATION`, `DENY` |
-| `reason` | `live_match`, `spoof_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable` |
+| `reason` | `live_match`, `spoof_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable`, `jev_required` |
 | `scenario` | `unlabeled`, `genuine`, `wrong_identity`, `print_photo`, `screen_photo`, `video_replay`, `poor_light` |
 
 ## Endpoints
@@ -27,7 +27,8 @@ All three teammates build against this file. If anything here needs to change, a
 | `GET /api/preview` | — | MJPEG stream. Returns `409 camera_unavailable` if the camera is not running |
 | `GET /api/participants` | — | `[{participant_id, name, enrolled_at}]` |
 | `POST /api/enroll` | `{name, participant_id?}` | `{participant_id, name, frames_used, liveness_ok}`. Returns `422 spoof_detected` if the enrollment frames fail liveness |
-| `POST /api/verify` | `{participant_id}` | Attempt object (below) |
+| `POST /api/verify` | `{participant_id, require_jev?}` | Attempt object (below). With `require_jev: true`, a local pass returns `REQUEST_VERIFICATION / jev_required` until the scene has been checked. |
+| `POST /api/attempts/{attempt_id}/second_check` | `{consent: true}` | Jev outcome, reason, phone or paper probability and timing. See [Jev scene check](jev.md). |
 | `GET /api/attempts?limit=50` | — | `[attempt object]`, newest first |
 | `POST /api/attempts/{attempt_id}/scenario` | `{scenario}` | `{attempt_id, scenario}` |
 | `POST /api/attempts/{attempt_id}/client_timing` | `{click_to_render_ms, ui_deadline_missed}` | `{attempt_id}` |

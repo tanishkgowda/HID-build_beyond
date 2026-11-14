@@ -28,6 +28,8 @@ const HEALTH_POLL_MS = 5000;
 const PRESENCE_POLL_MS = 150;
 const REARM_AFTER_MS = 700;
 const SECOND_CHECK_MESSAGE: Record<SecondCheck['reason'], string> = {
+  second_check_object_detected: 'Phone or paper detected. Remove it from view and try again.',
+  second_check_passed: 'Identity and scene checks passed.',
   second_check_spoof: 'The second check found evidence of a spoof.',
   second_check_recapture: 'The second check could not establish liveness. Try a fresh capture.',
   second_check_unavailable: 'The second check was unavailable. Try a fresh capture.',
@@ -93,6 +95,7 @@ export default function App() {
   const [verifying, setVerifying] = useState(false); // UI attempt open
   const [serverBusy, setServerBusy] = useState(false); // request still in flight
   const [jevBusy, setJevBusy] = useState(false);
+  const [useJev, setUseJev] = useState(false);
   const [shown, setShown] = useState<Shown | null>(null);
   const seqRef = useRef(0);
   const ctxRef = useRef<AttemptCtx | null>(null);
@@ -224,6 +227,21 @@ export default function App() {
       .catch((e) => setNotice(`Could not save the client timing: ${errMessage(e)}`));
   }, [refreshAttempts]);
 
+  const runSecondCheck = useCallback(async (id: string) => {
+    setJevBusy(true);
+    try {
+      const result = await api.secondCheck(id);
+      setShown((current) => current?.attempt?.attempt_id === id
+        ? { ...current, attempt: { ...current.attempt, second_check: result } }
+        : current);
+      void refreshAttempts();
+    } catch (e) {
+      setNotice(`Could not run the second check: ${errMessage(e)}`);
+    } finally {
+      setJevBusy(false);
+    }
+  }, [refreshAttempts]);
+
   const verify = useCallback(async () => {
     if (!selectedId || !cameraRunning || previewFailed || verifying || serverBusy || jevBusy || enrolling || cameraBusy) return;
     arrival.current.checked = true;
@@ -256,7 +274,7 @@ export default function App() {
     const timer = window.setTimeout(closeAtDeadline, UI_DEADLINE_MS);
 
     try {
-      const attempt = await api.verify(selectedId);
+      const attempt = await api.verify(selectedId, useJev);
       if (performance.now() - ctx.start >= UI_DEADLINE_MS) closeAtDeadline();
       window.clearTimeout(timer);
       if (!ctx.closed) {
@@ -269,6 +287,11 @@ export default function App() {
           uiDeadlineMissed: false,
           errorCode: null,
         });
+        if (useJev && attempt.outcome === 'REQUEST_VERIFICATION' &&
+            (attempt.reason === 'jev_required' ||
+              (attempt.reason === 'uncertain_liveness' && (attempt.match_score ?? -1) >= .5))) {
+          await runSecondCheck(attempt.attempt_id);
+        }
       } else {
         // Late response: don't display it. Report the miss, with the time at
         // which the fallback REQUEST_VERIFICATION reached the screen.
@@ -297,7 +320,7 @@ export default function App() {
       void refreshAttempts();
     }
   }, [selectedId, cameraRunning, previewFailed, verifying, serverBusy, jevBusy, enrolling, cameraBusy,
-    show, saveClientTiming, refreshAttempts]);
+    show, saveClientTiming, refreshAttempts, useJev, runSecondCheck]);
 
   useEffect(() => {
     arrival.current = { seen: 0, emptySince: null, checked: false };
@@ -395,26 +418,10 @@ export default function App() {
   const canRunJev = !!(
     health?.jev_enabled && cameraRunning && !verifying && !serverBusy &&
     shown?.attempt && shown.attempt.participant_id === selectedId &&
-    shown.attempt.reason === 'uncertain_liveness' &&
+    (shown.attempt.reason === 'jev_required' || shown.attempt.reason === 'uncertain_liveness') &&
+    (shown.attempt.match_score ?? -1) >= .5 &&
     shown.clickToRenderMs !== null && !shown.uiDeadlineMissed && !shown.attempt.second_check
   );
-
-  const runJev = async () => {
-    if (!canRunJev || !shown?.attempt || jevBusy) return;
-    const id = shown.attempt.attempt_id;
-    setJevBusy(true);
-    try {
-      const result = await api.secondCheck(id);
-      setShown((current) => current?.attempt?.attempt_id === id
-        ? { ...current, attempt: { ...current.attempt, second_check: result } }
-        : current);
-      void refreshAttempts();
-    } catch (e) {
-      setNotice(`Could not run the second check: ${errMessage(e)}`);
-    } finally {
-      setJevBusy(false);
-    }
-  };
 
   const displayOutcome = shown?.attempt?.second_check?.outcome ?? shown?.outcome ?? null;
   const instruction = previewFailed ? 'Camera preview unavailable'
@@ -523,28 +530,31 @@ export default function App() {
               <button className="btn btn-primary" disabled={!readyForRetry} onClick={verify}>Verify manually</button>
               {!shown && !verifying && <p className="hint">{instruction}</p>}
             </div>
+            {health?.jev_enabled && (
+              <label className="field-inline jev-option">
+                <input type="checkbox" checked={useJev} onChange={(e) => {
+                  setUseJev(e.target.checked);
+                  arrival.current = { seen: 0, emptySince: null, checked: false };
+                  setShown(null);
+                }}
+                  disabled={verifying || serverBusy || jevBusy} />
+                <span>Require Jev phone and paper check</span>
+              </label>
+            )}
+            {health?.jev_enabled && (
+              <p className="hint">Enable with participant consent. The check sends one fresh full camera frame to TypeSafe.</p>
+            )}
             <OutcomeCard shown={shown} verifying={verifying} onLabel={labelScenario} />
-            {shown?.attempt?.second_check && (
-              <div className="stack" aria-live="polite">
-                <strong>Jev second check · {OUTCOME_TITLE[shown.attempt.second_check.outcome]}</strong>
-                <p className="hint">{SECOND_CHECK_MESSAGE[shown.attempt.second_check.reason]}</p>
-                <p className="hint">
-                  {shown.attempt.second_check.jev_label &&
-                    `${JEV_LABEL[shown.attempt.second_check.jev_label] ?? 'Unclear'} · `}
-                  {fmtMs(shown.attempt.second_check.second_check_ms)} total
-                  {shown.attempt.second_check.jev_ms !== null &&
-                    ` · ${fmtMs(shown.attempt.second_check.jev_ms)} from TypeSafe`}
-                </p>
-              </div>
-            )}
-            {(canRunJev || jevBusy) && (
-              <div className="stack">
-                <p className="hint">With your consent, the kiosk sends one fresh camera crop to TypeSafe.</p>
-                <button className="btn btn-secondary" onClick={runJev} disabled={jevBusy}>
-                  {jevBusy ? 'Running second check…' : 'Consent and run Jev'}
-                </button>
-              </div>
-            )}
+            {jevBusy ? <p className="hint" role="status">Checking the scene with Jev…</p>
+              : canRunJev && !useJev && (
+                <div className="stack">
+                  <p className="hint">With your consent, the kiosk sends one fresh full camera frame to TypeSafe.</p>
+                  <button className="btn btn-secondary"
+                    onClick={() => { if (shown?.attempt) void runSecondCheck(shown.attempt.attempt_id); }}>
+                    Consent and run Jev
+                  </button>
+                </div>
+              )}
           </div>
         </section>
 
@@ -643,20 +653,30 @@ function OutcomeCard(props: {
   if (!shown) return null;
 
   const a = shown.attempt;
+  const check = a?.second_check;
+  const outcome = check?.outcome ?? shown.outcome;
   const cls =
-    shown.outcome === 'ALLOW'
+    outcome === 'ALLOW'
       ? 'outcome-allow'
-      : shown.outcome === 'DENY'
+      : outcome === 'DENY'
         ? 'outcome-deny'
         : 'outcome-request';
 
   return (
     <div className={`outcome ${cls}`} aria-live="assertive">
       <div className="outcome-head">
-        <OutcomeIcon outcome={shown.outcome} />
-        <div className="outcome-title">{OUTCOME_TITLE[shown.outcome]}</div>
+        <OutcomeIcon outcome={outcome} />
+        <div className="outcome-title">{OUTCOME_TITLE[outcome]}</div>
       </div>
-      <p className="outcome-msg">{shown.message}</p>
+      <p className="outcome-msg">{check ? SECOND_CHECK_MESSAGE[check.reason] : shown.message}</p>
+      {check && (
+        <p className="hint">
+          {check.jev_ms === null ? 'Second check' : 'Jev second check'}
+          {check.jev_label && check.reason !== 'second_check_object_detected' &&
+            ` · ${JEV_LABEL[check.jev_label] ?? 'Unclear'}`}
+          {` · ${fmtMs(check.second_check_ms)} total`}
+        </p>
+      )}
 
       <dl className="metrics">
         <div>
@@ -786,12 +806,12 @@ function AttemptsTable(props: {
               <td className="mono-num">{fmtTime(a.created_at)}</td>
               <td>{nameOf(a.participant_id)}</td>
               <td>
-                <span className={`badge ${OUTCOME_BADGE[a.outcome]}`}>
+                <span className={`badge ${OUTCOME_BADGE[a.second_check?.outcome ?? a.outcome]}`}>
                   <span className="badge-dot" />
-                  {a.outcome.replace('_', ' ')}
+                  {(a.second_check?.outcome ?? a.outcome).replace(/_/g, ' ')}
                 </span>
               </td>
-              <td className="code">{a.reason}</td>
+              <td className="code">{a.second_check?.reason ?? a.reason}</td>
               <td className="num">{fmtScore(a.liveness_score)}</td>
               <td className="num">{fmtScore(a.match_score)}</td>
               <td className="num">{fmtMs(a.elapsed_ms)}</td>
