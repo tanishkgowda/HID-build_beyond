@@ -21,7 +21,10 @@ import numpy as np
 
 from .camera import Camera, CameraUnavailable
 from .jev import JevClient, face_crop_jpeg
-from .policy import FRAME_COUNT, LIVE_PASS, MATCH_PASS, SPOOF_DENY, decide_frames, valid_liveness, valid_match
+from .policy import (
+    Decision, FRAME_COUNT, LIVE_PASS, MATCH_PASS, MISMATCH_DENY, SPOOF_DENY,
+    decide_frames, valid_liveness, valid_match,
+)
 from .schemas import (
     Attempt, AttemptReference, CameraStart, CameraStarted, CameraStopped,
     ClientTiming, Enrollment, EnrollmentRequest, FrameEvidence, Health, Participant,
@@ -97,7 +100,9 @@ def capture_and_analyze(camera, vision, deadline, timings):
 
 def verify_frames(camera, vision, template, deadline, timings):
     try:
-        readings = capture_and_analyze(camera, vision, deadline, timings)
+        with timings.measure("capture"):
+            frames, blinked = vision.capture_blink(camera, deadline)
+        readings = [vision.analyze(frame, timings, lambda: check_deadline(deadline)) for frame in frames]
     except CameraUnavailable:
         with timings.measure("policy"):
             return (*decide_frames([], issue="camera_unavailable"), [])
@@ -122,6 +127,12 @@ def verify_frames(camera, vision, template, deadline, timings):
         decision, live, match = decide_frames(
             [(frame.liveness_score, frame.match_score) for frame in evidence], issue=issue,
         )
+        if issue is None and not blinked and decision.reason in {"live_match", "uncertain_liveness"}:
+            decision = Decision("REQUEST_VERIFICATION", "blink_required")
+        elif decision.outcome == "ALLOW" and any(
+            frame.match_score is None or frame.match_score <= MISMATCH_DENY for frame in evidence
+        ):
+            decision = Decision("REQUEST_VERIFICATION", "uncertain_match")
     check_deadline(deadline)
     return decision, live, match, evidence
 

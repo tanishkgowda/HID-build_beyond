@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 data/
 models/*.onnx
+models/*.task
 node_modules/
 web/dist/
 .env

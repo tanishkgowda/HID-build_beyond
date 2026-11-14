@@ -13,7 +13,7 @@ All three teammates build against this file. If anything here needs to change, a
 | Field | Allowed values |
 | --- | --- |
 | `outcome` | `ALLOW`, `REQUEST_VERIFICATION`, `DENY` |
-| `reason` | `live_match`, `spoof_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable` |
+| `reason` | `live_match`, `spoof_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable`, `blink_required` |
 | `scenario` | `unlabeled`, `genuine`, `wrong_identity`, `print_photo`, `screen_photo`, `video_replay`, `poor_light` |
 
 ## Endpoints
@@ -60,6 +60,10 @@ All three teammates build against this file. If anything here needs to change, a
 - If any single frame has a definitive spoof score, the outcome is `DENY` with reason `spoof_detected`.
 - Liveness passes only if all three frames pass. The attempt's `liveness_score` is the lowest frame score.
 - The attempt's `match_score` is the mean of the three frame scores against the enrolled template.
+
+## Blink check
+
+Verification asks for one blink as soon as the check starts. A local Allow also requires an open → closed → open eye sequence on fresh frames. Missing blink evidence returns `REQUEST_VERIFICATION` with `blink_required` when passive liveness would otherwise pass or be uncertain. Jev is offered only after a blink when the local model is unsure about liveness and identity matches.
 
 ## Deadlines
 

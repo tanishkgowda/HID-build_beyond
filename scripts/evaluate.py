@@ -44,7 +44,7 @@ OUTCOMES = ("ALLOW", "REQUEST_VERIFICATION", "DENY")
 SCENARIOS = ("genuine", "poor_light", "wrong_identity", "print_photo", "screen_photo", "video_replay")
 ATTACKS = ("print_photo", "screen_photo", "video_replay")
 GENUINE = ("genuine", "poor_light")
-CAPTURE_REASONS = ("no_face", "multiple_faces", "poor_quality")
+CAPTURE_REASONS = ("no_face", "multiple_faces", "poor_quality", "blink_required")
 UI_DEADLINE_MS = 2000
 TARGET_ATTEMPTS = 20
 
@@ -230,7 +230,11 @@ def redecide(frames, t):
 
 def sweep(attempts, key, values):
     rows = []
-    usable = [a for a in attempts if a["scenario"] in SCENARIOS and redecide(a["frames"], DEFAULT_THRESHOLDS)]
+    usable = [
+        a for a in attempts
+        if a["scenario"] in SCENARIOS and a["reason"] != "blink_required"
+        and redecide(a["frames"], DEFAULT_THRESHOLDS)
+    ]
     for value in values:
         t = {**DEFAULT_THRESHOLDS, key: value}
         outcome = {a["attempt_id"]: redecide(a["frames"], t) for a in usable}
@@ -296,7 +300,7 @@ def markdown(report, source, sweeps=None):
     w(f"| Rendered within {UI_DEADLINE_MS} ms | {frac(labeled['within_ui_deadline'], labeled['client_timed'])} |")
     w(f"| Server deadline misses | {frac(labeled['server_deadline_missed'], labeled['n'])} |")
     w(f"| UI deadline misses | {frac(labeled['ui_deadline_missed'], labeled['n'])} |")
-    w(f"| Capture-quality retries (no face, several faces, poor quality) | "
+    w(f"| Capture retries (face, lighting or blink) | "
       f"{frac(labeled['capture_retries'], labeled['n'])} |\n")
 
     if report["jev_second_checks"]:

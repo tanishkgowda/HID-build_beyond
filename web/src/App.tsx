@@ -637,14 +637,14 @@ function OutcomeCard(props: {
           <span className="spinner" aria-hidden="true" />
           <div className="outcome-title">Checking…</div>
         </div>
-        <p className="outcome-msg">Keep looking at the camera.</p>
+        <p className="outcome-msg">Look straight at the camera and blink once now.</p>
       </div>
     );
   }
   if (!shown) {
     return (
       <div className="outcome outcome-idle" aria-live="polite">
-        <p className="outcome-msg">Select your badge and press Verify.</p>
+        <p className="outcome-msg">Look straight at the camera. Press Verify, then blink once.</p>
       </div>
     );
   }

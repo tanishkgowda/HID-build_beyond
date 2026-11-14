@@ -48,6 +48,10 @@ def use_test_frames(monkeypatch):
         liveness = .98
         delay = 0
         match_index = 0
+        blinked = True
+
+        def capture_blink(self, camera, deadline):
+            return camera.sample(3, deadline), self.blinked
 
         def analyze(self, frame, timings, check_deadline):
             sleep(self.delay)
@@ -159,3 +163,29 @@ def test_jev_second_check_is_opt_in_matches_identity_and_runs_once(tmp_path, mon
         failed = client.post(f"/api/attempts/{another['attempt_id']}/second_check", json={"consent": True})
         assert failed.json()["reason"] == "second_check_identity_unconfirmed"
         assert len(calls) == 1
+
+
+def test_high_scores_without_a_blink_cannot_allow(tmp_path, monkeypatch):
+    app = create_app(tmp_path)
+    vision = use_test_frames(monkeypatch)
+    vision.blinked = False
+    with TestClient(app) as client:
+        assert client.post("/api/enroll", json={"name": "Teammate", "participant_id": PARTICIPANT_ID}).status_code == 200
+        result = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
+        assert result["liveness_score"] >= .90
+        assert result["match_score"] >= .50
+        assert result["outcome"] == "REQUEST_VERIFICATION"
+        assert result["reason"] == "blink_required"
+
+
+def test_blink_requires_both_eyes_to_close_and_reopen_on_valid_frames():
+    from app.vision import BlinkEvidence
+
+    tracker = BlinkEvidence()
+    for scores in ((.04, .05), (.04, .05), (.8, .06), (.05, .04)):
+        assert not tracker.update(scores)
+    assert not tracker.update((.8, .9))
+    assert not tracker.update(None)
+    assert not tracker.update((.04, .05))
+    assert not tracker.update((.8, .9))
+    assert tracker.update((.04, .05))

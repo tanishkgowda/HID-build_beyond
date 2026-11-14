@@ -33,6 +33,7 @@ export const REASONS = [
   'deadline_exceeded',
   'not_enrolled',
   'camera_unavailable',
+  'blink_required',
 ] as const;
 export type Reason = (typeof REASONS)[number];
 

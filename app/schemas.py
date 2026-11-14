@@ -6,7 +6,7 @@ Outcome = Literal["ALLOW", "REQUEST_VERIFICATION", "DENY"]
 Reason = Literal[
     "live_match", "spoof_detected", "identity_mismatch", "no_face",
     "multiple_faces", "poor_quality", "uncertain_liveness", "uncertain_match",
-    "deadline_exceeded", "not_enrolled", "camera_unavailable",
+    "deadline_exceeded", "not_enrolled", "camera_unavailable", "blink_required",
 ]
 Scenario = Literal[
     "unlabeled", "genuine", "wrong_identity", "print_photo", "screen_photo",

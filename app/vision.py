@@ -1,12 +1,39 @@
 from dataclasses import dataclass
 from math import exp, isfinite
 from pathlib import Path
+from time import monotonic
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 
+from .policy import FRAME_COUNT
 from .schemas import ModelVersions
+
+# Leave time for the existing face detector and three identity/liveness checks.
+BLINK_CAPTURE_SECONDS = 1.30
+BLINK_INFERENCE_RESERVE_SECONDS = 0.25
+EYES_OPEN_MAX = 0.24
+EYES_CLOSED_MIN = 0.52
+
+
+class BlinkEvidence:
+    def __init__(self):
+        self.saw_open = False
+        self.saw_closed = False
+
+    def update(self, eyes):
+        if eyes is None:
+            self.saw_open = self.saw_closed = False
+            return False
+        if max(eyes) <= EYES_OPEN_MAX:
+            confirmed = self.saw_open and self.saw_closed
+            self.saw_open = True
+            return confirmed
+        if self.saw_open and min(eyes) >= EYES_CLOSED_MIN:
+            self.saw_closed = True
+        return False
+
 
 MODEL_VERSIONS = ModelVersions(
     detector="YuNet 2023mar",
@@ -73,9 +100,19 @@ def _quality_ok(frame, face):
 
 class Vision:
     def __init__(self, model_dir: Path):
-        for name in ("yunet.onnx", "sface.onnx", "minifasnet.onnx"):
+        for name in ("yunet.onnx", "sface.onnx", "minifasnet.onnx", "face_landmarker.task"):
             if not (model_dir / name).is_file():
                 raise FileNotFoundError(model_dir / name)
+
+        import mediapipe as mp
+
+        self.mp = mp
+        options = mp.tasks.vision.FaceLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_dir / "face_landmarker.task")),
+            num_faces=1,
+            output_face_blendshapes=True,
+        )
+        self.landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(options)
 
         cv2.setNumThreads(2)
         self.detector = cv2.FaceDetectorYN.create(str(model_dir / "yunet.onnx"), "", (640, 480))
@@ -92,6 +129,53 @@ class Vision:
         self.detector.detect(np.zeros((480, 640, 3), dtype=np.uint8))
         self.recognizer.feature(np.zeros((112, 112, 3), dtype=np.uint8))
         self._live_score(np.zeros((1, 3, 128, 128), dtype=np.float32))
+        self._eye_scores(np.zeros((240, 320, 3), dtype=np.uint8))
+
+    def _eye_scores(self, frame):
+        height, width = frame.shape[:2]
+        if width > 480:
+            frame = cv2.resize(frame, (480, round(height * 480 / width)), interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = self.landmarker.detect(self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb))
+        if not result.face_blendshapes:
+            return None
+        eyes = {cat.category_name: cat.score for cat in result.face_blendshapes[0]}
+        if "eyeBlinkLeft" not in eyes or "eyeBlinkRight" not in eyes:
+            return None
+        return eyes["eyeBlinkLeft"], eyes["eyeBlinkRight"]
+
+    def capture_blink(self, camera, deadline):
+        start = monotonic()
+        end = min(start + BLINK_CAPTURE_SECONDS, deadline - BLINK_INFERENCE_RESERVE_SECONDS)
+        evidence = BlinkEvidence()
+        selected = []
+        last_selected = 0.0
+        blink_closed = None
+        fallback = None
+        for frame in camera.fresh_frames(end):
+            fallback = frame
+            now = monotonic()
+            eyes = self._eye_scores(frame)
+            confirmed = evidence.update(eyes)
+            if eyes is None:
+                selected.clear()
+                last_selected = 0.0
+                blink_closed = None
+            elif max(eyes) <= EYES_OPEN_MAX:
+                if confirmed and blink_closed is not None:
+                    return [*blink_closed, frame], True
+                if not selected or now - last_selected >= 0.15:
+                    selected.append(frame)
+                    last_selected = now
+            elif evidence.saw_open and min(eyes) >= EYES_CLOSED_MIN and blink_closed is None:
+                if selected:
+                    blink_closed = (selected[-1], frame)
+
+        step = max(1, len(selected) // FRAME_COUNT)
+        # Keep a sample even if the landmarker failed, for normal capture guidance.
+        frames = selected[::step][:FRAME_COUNT] or ([fallback] if fallback is not None else [])
+        return frames, False
+
 
     def _live_score(self, tensor):
         # The pinned Facenox export uses index 0 for real and 1 for spoof.
