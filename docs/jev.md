@@ -4,7 +4,7 @@ Jev receives one fresh full camera frame after participant consent. It checks fo
 
 ## Start a check
 
-Start the backend with `TYPESAFE_API_KEY` set. With participant consent, turn on **Require Jev phone and paper check** in the kiosk. A local pass becomes `REQUEST_VERIFICATION` with reason `jev_required`, then the kiosk runs the scene check automatically. Local denials are final. The backend checks the selected identity again before sending the frame. A final Allow requires a local pass and a clear Jev result. An uncertain local liveness result can lead to a Deny or a recapture.
+Start the backend with `TYPESAFE_API_KEY` set. With a Jev key configured on the server, local passes always require a scene check. Use **Consent and run Jev** for the current attempt or, with participant consent, enable **Consent to automatic Jev checks** for a rehearsal. A local pass becomes `REQUEST_VERIFICATION` with reason `jev_required`, then the kiosk runs the scene check with consent. Local denials are final. The backend checks the selected identity again before sending the frame. A final Allow requires a local pass and a clear Jev result. An uncertain local liveness result can lead to a Deny or a recapture.
 
 The initial local decision and the hosted result have separate timings. If TypeSafe is unavailable or times out, the kiosk keeps access pending. The evaluator lists Jev results separately from the initial local decisions.
 

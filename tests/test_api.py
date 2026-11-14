@@ -136,7 +136,8 @@ def test_jev_second_check_is_opt_in_matches_identity_and_runs_once(tmp_path, mon
         assert client.post("/api/enroll", json={"name": "Teammate", "participant_id": PARTICIPANT_ID}).status_code == 200
         first = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
         url = f"/api/attempts/{first['attempt_id']}/second_check"
-        assert client.post(url, json={"consent": True}).status_code == 409
+        assert first["reason"] == "jev_required"
+        assert client.post(url, json={"consent": False}).status_code == 422
 
         vision.liveness = .8
         uncertain = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
@@ -180,7 +181,7 @@ def test_presence_describes_geometry_only_for_one_face(tmp_path, monkeypatch):
         assert client.get("/api/attempts").json() == []
 
 
-def test_jev_mode_holds_local_allow_until_scene_check(tmp_path, monkeypatch):
+def test_jev_configured_holds_local_allow_without_client_flag(tmp_path, monkeypatch):
     from app.jev import JevResult
 
     app = create_app(tmp_path)
@@ -200,7 +201,7 @@ def test_jev_mode_holds_local_allow_until_scene_check(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "JevClient", Client)
     with TestClient(app) as client:
         assert client.post("/api/enroll", json={"name": "Teammate", "participant_id": PARTICIPANT_ID}).status_code == 200
-        first = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID, "require_jev": True}).json()
+        first = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
         assert first["outcome"] == "REQUEST_VERIFICATION"
         assert first["reason"] == "jev_required"
         assert seen == []
@@ -209,3 +210,7 @@ def test_jev_mode_holds_local_allow_until_scene_check(tmp_path, monkeypatch):
         assert response.json()["outcome"] == "DENY"
         assert response.json()["reason"] == "second_check_object_detected"
         assert seen == [(480, 640, 3)]
+        rows = client.get("/api/attempts").json()
+        assert rows[0]["second_check"]["outcome"] == "DENY"
+        again = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID, "require_jev": False}).json()
+        assert again["reason"] == "jev_required" and again["outcome"] == "REQUEST_VERIFICATION"

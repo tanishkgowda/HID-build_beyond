@@ -26,7 +26,7 @@ import { ThemeToggle } from './theme';
 
 const HEALTH_POLL_MS = 5000;
 const PRESENCE_POLL_MS = 150;
-const REARM_AFTER_MS = 700;
+const REARM_AFTER_MS = 350;
 const SECOND_CHECK_MESSAGE: Record<SecondCheck['reason'], string> = {
   second_check_object_detected: 'Phone or paper detected. Remove it from view and try again.',
   second_check_passed: 'Identity and scene checks passed.',
@@ -63,6 +63,7 @@ interface AttemptCtx {
   closed: boolean;
   renderedMs: number | null;
   lateAttemptId: string | null;
+  departed: boolean;
 }
 
 const fmtScore = (n: number | null | undefined) => (n == null ? '—' : n.toFixed(2));
@@ -95,7 +96,8 @@ export default function App() {
   const [verifying, setVerifying] = useState(false); // UI attempt open
   const [serverBusy, setServerBusy] = useState(false); // request still in flight
   const [jevBusy, setJevBusy] = useState(false);
-  const [useJev, setUseJev] = useState(false);
+  const [jevConsent, setJevConsent] = useState(false);
+  const jevConfigured = health?.jev_enabled === true;
   const [shown, setShown] = useState<Shown | null>(null);
   const seqRef = useRef(0);
   const ctxRef = useRef<AttemptCtx | null>(null);
@@ -216,7 +218,7 @@ export default function App() {
   // ---------------------------------------------------------------------------
 
   const show = useCallback((ctx: AttemptCtx, s: Omit<Shown, 'seq' | 'clickToRenderMs'>) => {
-    setShown({ ...s, seq: ctx.seq, clickToRenderMs: null });
+    if (!ctx.departed) setShown({ ...s, seq: ctx.seq, clickToRenderMs: null });
     setVerifying(false);
   }, []);
 
@@ -252,6 +254,7 @@ export default function App() {
       closed: false,
       renderedMs: null,
       lateAttemptId: null,
+      departed: false,
     };
     ctxRef.current = ctx;
     setVerifying(true);
@@ -274,7 +277,7 @@ export default function App() {
     const timer = window.setTimeout(closeAtDeadline, UI_DEADLINE_MS);
 
     try {
-      const attempt = await api.verify(selectedId, useJev);
+      const attempt = await api.verify(selectedId, jevConfigured);
       if (performance.now() - ctx.start >= UI_DEADLINE_MS) closeAtDeadline();
       window.clearTimeout(timer);
       if (!ctx.closed) {
@@ -282,12 +285,14 @@ export default function App() {
         show(ctx, {
           outcome: attempt.outcome,
           reason: attempt.reason,
-          message: REASON_MESSAGE[attempt.reason] ?? attempt.reason,
+          message: attempt.reason === 'jev_required' && !jevConsent
+            ? 'Local checks passed. Consent to the Jev scene check to continue.'
+            : REASON_MESSAGE[attempt.reason] ?? attempt.reason,
           attempt,
           uiDeadlineMissed: false,
           errorCode: null,
         });
-        if (useJev && attempt.outcome === 'REQUEST_VERIFICATION' &&
+        if (jevConsent && !ctx.departed && attempt.outcome === 'REQUEST_VERIFICATION' &&
             (attempt.reason === 'jev_required' ||
               (attempt.reason === 'uncertain_liveness' && (attempt.match_score ?? -1) >= .5))) {
           await runSecondCheck(attempt.attempt_id);
@@ -320,7 +325,7 @@ export default function App() {
       void refreshAttempts();
     }
   }, [selectedId, cameraRunning, previewFailed, verifying, serverBusy, jevBusy, enrolling, cameraBusy,
-    show, saveClientTiming, refreshAttempts, useJev, runSecondCheck]);
+    show, saveClientTiming, refreshAttempts, jevConfigured, jevConsent, runSecondCheck]);
 
   useEffect(() => {
     arrival.current = { seen: 0, emptySince: null, checked: false };
@@ -341,23 +346,20 @@ export default function App() {
         if (cancelled) return;
         setPresence(next);
         const state = arrival.current;
-        if (busy) {
-          state.seen = 0;
-          state.emptySince = null;
-        } else if (next.count === 0) {
+        if (next.count === 0 && next.width > 0) {
           state.seen = 0;
           state.emptySince ??= performance.now();
           if (state.checked && performance.now() - state.emptySince >= REARM_AFTER_MS) {
             state.checked = false;
+            if (ctxRef.current) ctxRef.current.departed = true;
             setShown(null);
           }
         } else {
           state.emptySince = null;
-          state.seen = next.ready ? state.seen + 1 : 0;
+          state.seen = !busy && next.ready ? state.seen + 1 : 0;
           if (state.seen >= 2 && !state.checked && selectedId &&
               document.visibilityState === 'visible') {
             void verify();
-            return;
           }
         }
       } catch {
@@ -420,10 +422,17 @@ export default function App() {
     shown?.attempt && shown.attempt.participant_id === selectedId &&
     (shown.attempt.reason === 'jev_required' || shown.attempt.reason === 'uncertain_liveness') &&
     (shown.attempt.match_score ?? -1) >= .5 &&
-    shown.clickToRenderMs !== null && !shown.uiDeadlineMissed && !shown.attempt.second_check
+    !!presence?.ready && shown.clickToRenderMs !== null && !shown.uiDeadlineMissed && !shown.attempt.second_check
   );
 
   const displayOutcome = shown?.attempt?.second_check?.outcome ?? shown?.outcome ?? null;
+  useEffect(() => {
+    // A lingering green result can be mistaken for a new scan if someone
+    // moves into frame before the previous participant has fully departed.
+    if (displayOutcome !== 'ALLOW') return;
+    const timer = window.setTimeout(() => setShown(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [displayOutcome, shown?.seq]);
   const instruction = previewFailed ? 'Camera preview unavailable'
     : !cameraRunning ? 'Start the camera to begin'
     : enrolling ? 'Look straight ahead'
@@ -433,7 +442,8 @@ export default function App() {
     : shown && presence?.count === 1 ? (displayOutcome === 'ALLOW' ? 'You may proceed' : 'Step away to reset')
     : !health?.models_loaded ? 'Waiting for the verification service'
     : !selectedId ? 'Enroll or select a participant'
-    : presence?.face && !presence.ready ? 'Move closer and center your face'
+    : presence?.face && !presence.ready ? 'Move closer and keep your face in view'
+    : arrival.current.checked && presence?.count === 1 ? 'Step away to start a new check'
     : 'Step into view and look straight ahead';
   const readyForRetry = cameraRunning && !previewFailed && !!selectedId && !!presence?.ready &&
     !!health?.models_loaded && !verifying && !serverBusy && !enrolling && !jevBusy && !cameraBusy;
@@ -530,23 +540,19 @@ export default function App() {
               <button className="btn btn-primary" disabled={!readyForRetry} onClick={verify}>Verify manually</button>
               {!shown && !verifying && <p className="hint">{instruction}</p>}
             </div>
-            {health?.jev_enabled && (
-              <label className="field-inline jev-option">
-                <input type="checkbox" checked={useJev} onChange={(e) => {
-                  setUseJev(e.target.checked);
-                  arrival.current = { seen: 0, emptySince: null, checked: false };
-                  setShown(null);
-                }}
-                  disabled={verifying || serverBusy || jevBusy} />
-                <span>Require Jev phone and paper check</span>
-              </label>
-            )}
-            {health?.jev_enabled && (
-              <p className="hint">Enable with participant consent. The check sends one fresh full camera frame to TypeSafe.</p>
+            {jevConfigured && (
+              <>
+                <label className="field-inline jev-option">
+                  <input type="checkbox" checked={jevConsent} onChange={(e) => setJevConsent(e.target.checked)}
+                    disabled={verifying || serverBusy || jevBusy} />
+                  <span>Consent to automatic Jev checks</span>
+                </label>
+                <p className="hint">Jev is required for access. Each check sends one full camera frame to TypeSafe.</p>
+              </>
             )}
             <OutcomeCard shown={shown} verifying={verifying} onLabel={labelScenario} />
             {jevBusy ? <p className="hint" role="status">Checking the scene with Jev…</p>
-              : canRunJev && !useJev && (
+              : canRunJev && (
                 <div className="stack">
                   <p className="hint">With your consent, the kiosk sends one fresh full camera frame to TypeSafe.</p>
                   <button className="btn btn-secondary"

@@ -35,6 +35,7 @@ export const REASONS = [
   'camera_unavailable',
   'blink_required',
   'jev_required',
+  'jev_unavailable',
 ] as const;
 export type Reason = (typeof REASONS)[number];
 
@@ -190,11 +191,13 @@ export interface KioskApi {
   ): Promise<ClientTimingResult>;
 }
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = 8000): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`/api${path}`, {
       method,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(timeoutMs),
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -232,7 +235,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 
 const realApi: KioskApi = {
   health: () => request<Health>('GET', '/health'),
-  presence: () => request<Presence>('GET', '/presence'),
+  presence: () => request<Presence>('GET', '/presence', undefined, 1000),
   startCamera: (deviceIndex) =>
     request<CameraStarted>(
       'POST',
@@ -249,7 +252,7 @@ const realApi: KioskApi = {
       participantId === undefined ? { name } : { name, participant_id: participantId },
     ),
   verify: (participantId, requireJev = false) =>
-    request<Attempt>('POST', '/verify', { participant_id: participantId, require_jev: requireJev }),
+    request<Attempt>('POST', '/verify', { participant_id: participantId, require_jev: requireJev }, 3500),
   secondCheck: (attemptId) =>
     request<SecondCheck>('POST', `/attempts/${encodeURIComponent(attemptId)}/second_check`, { consent: true }),
   attempts: (limit = 50) => request<Attempt[]>('GET', `/attempts?limit=${limit}`),

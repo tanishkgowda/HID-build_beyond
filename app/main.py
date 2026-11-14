@@ -145,7 +145,8 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
     async def lifespan(app):
         app.state.store = Store(data_dir / "kiosk.sqlite")
         app.state.jev = None
-        if os.environ.get("TYPESAFE_API_KEY", "").strip():
+        app.state.require_jev = bool(os.environ.get("TYPESAFE_API_KEY", "").strip())
+        if app.state.require_jev:
             try:
                 app.state.jev = JevClient()
             except (RuntimeError, ValueError):
@@ -272,7 +273,6 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
                 response.ready = (
                     min(w, h) >= MIN_FACE_PIXELS
                     and (right - left) * (bottom - top) >= MIN_VISIBLE_FACE_FRACTION * w * h
-                    and 0.15 <= (x+w/2)/width <= 0.85 and 0.12 <= (y+h/2)/height <= 0.88
                 )
         return response
 
@@ -346,8 +346,9 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
             deadline_missed = True
             decision, live, match = decide_frames([], timed_out=True)
             frames = []
-        if body.require_jev and decision.outcome == "ALLOW":
-            decision = Decision("REQUEST_VERIFICATION", "jev_required")
+        if (app.state.require_jev or body.require_jev) and decision.outcome == "ALLOW":
+            reason = "jev_required" if app.state.jev is not None else "jev_unavailable"
+            decision = Decision("REQUEST_VERIFICATION", reason)
         attempt = Attempt(
             attempt_id=str(uuid4()),
             participant_id=body.participant_id,
