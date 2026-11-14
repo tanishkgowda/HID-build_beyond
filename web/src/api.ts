@@ -55,10 +55,23 @@ export function isReason(code: string): code is Reason {
 // Payloads
 // ---------------------------------------------------------------------------
 
+/** The policy thresholds from app/policy.py. */
+export interface Thresholds {
+  live_pass: number;
+  spoof_deny: number;
+  match_pass: number;
+  mismatch_deny: number;
+}
+
 export interface Health {
   models_loaded: boolean;
   camera_running: boolean;
   model_versions: { detector: string; recognizer: string; liveness: string };
+  /**
+   * PROPOSED, not yet in docs/api.md. When the backend returns it, the score
+   * meters draw pass/deny marks; until then they show plain bars.
+   */
+  thresholds?: Thresholds;
 }
 
 export interface CameraStarted {

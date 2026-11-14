@@ -101,6 +101,8 @@ export function createMockApi(makeError: MakeError): KioskApi {
           recognizer: 'sface-2021dec (mock)',
           liveness: 'minifasnet (mock)',
         },
+        // Proposed field (see Health.thresholds in api.ts); values from app/policy.py.
+        thresholds: { live_pass: 0.9, spoof_deny: 0.2, match_pass: 0.5, mismatch_deny: 0.3 },
       };
     },
 
