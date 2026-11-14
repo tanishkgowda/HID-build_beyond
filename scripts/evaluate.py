@@ -354,6 +354,9 @@ def write_csv(path, attempts):
 # ---------------------------------------------------------------- main
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles may not default to UTF-8
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--db", type=Path, help="SQLite file (default: $HID_DATA_DIR/kiosk.sqlite or data/kiosk.sqlite)")

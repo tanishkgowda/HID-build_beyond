@@ -170,6 +170,9 @@ def summarize(path=CSV_PATH):
 # ---------------------------------------------------------------- main
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles may not default to UTF-8
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scenario", choices=SCENARIOS)
     parser.add_argument("--source", default="api", help="api (default) or camera:<index>")
