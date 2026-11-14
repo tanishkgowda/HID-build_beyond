@@ -11,6 +11,7 @@ export const OUTCOME_TITLE: Record<Outcome, string> = {
 /** What the person at the kiosk should read (and do next). */
 export const REASON_MESSAGE: Record<Reason, string> = {
   live_match: 'Identity confirmed. You may proceed.',
+  phone_detected: 'Spoof detected. A phone is visible in the camera frame.',
   spoof_detected: 'The camera did not see a live person.',
   identity_mismatch: 'Your face does not match the selected badge.',
   no_face: 'No face found. Stand in front of the camera and look straight at it, then try again.',

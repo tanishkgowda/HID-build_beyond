@@ -13,7 +13,7 @@ All three teammates build against this file. If anything here needs to change, a
 | Field | Allowed values |
 | --- | --- |
 | `outcome` | `ALLOW`, `REQUEST_VERIFICATION`, `DENY` |
-| `reason` | `live_match`, `spoof_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable`, `jev_required`, `jev_unavailable` |
+| `reason` | `live_match`, `spoof_detected`, `phone_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable`, `jev_required`, `jev_unavailable` |
 | `scenario` | `unlabeled`, `genuine`, `wrong_identity`, `print_photo`, `screen_photo`, `video_replay`, `poor_light` |
 
 ## Endpoints
@@ -57,6 +57,8 @@ All three teammates build against this file. If anything here needs to change, a
 ```
 
 ## Three-frame rule
+
+YOLOX checks the full captured frames for phones. A phone score at or above 0.05 in any frame returns `DENY / phone_detected` before matching or Jev. The score is a detector output, and this cutoff favors sensitivity. Download the pinned model with `scripts/fetch_models.py`.
 
 - Every frame must contain exactly one face of usable quality. If any frame doesn't, the outcome is `REQUEST_VERIFICATION` with reason `no_face`, `multiple_faces` or `poor_quality`.
 - If any single frame has a definitive spoof score, the outcome is `DENY` with reason `spoof_detected`.

@@ -24,6 +24,7 @@ export type Outcome = (typeof OUTCOMES)[number];
 export const REASONS = [
   'live_match',
   'spoof_detected',
+  'phone_detected',
   'identity_mismatch',
   'no_face',
   'multiple_faces',

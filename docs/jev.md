@@ -2,6 +2,8 @@
 
 Jev receives one fresh full camera frame after participant consent. It checks for any visible phone or loose paper, even when a live person is holding the object or the screen is blank. This signal overrides the presentation classifier. An uncertain result asks for another capture.
 
+The local phone detector can deny an attempt before Jev. When Jev runs, an object score of 0.25 or higher also denies the attempt.
+
 ## Start a check
 
 Start the backend with `TYPESAFE_API_KEY` set. With a Jev key configured on the server, local passes always require a scene check. Use **Consent and run Jev** for the current attempt or, with participant consent, enable **Consent to automatic Jev checks** for a rehearsal. A local pass becomes `REQUEST_VERIFICATION` with reason `jev_required`, then the kiosk runs the scene check with consent. Local denials are final. The backend checks the selected identity again before sending the frame. A final Allow requires a local pass and a clear Jev result. An uncertain local liveness result can lead to a Deny or a recapture.

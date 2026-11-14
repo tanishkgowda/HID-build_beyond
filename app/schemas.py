@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 Outcome = Literal["ALLOW", "REQUEST_VERIFICATION", "DENY"]
 Reason = Literal[
-    "live_match", "spoof_detected", "identity_mismatch", "no_face",
+    "live_match", "spoof_detected", "phone_detected", "identity_mismatch", "no_face",
     "multiple_faces", "poor_quality", "uncertain_liveness", "uncertain_match",
     "deadline_exceeded", "not_enrolled", "camera_unavailable", "blink_required", "jev_required", "jev_unavailable",
 ]

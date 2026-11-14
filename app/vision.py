@@ -12,7 +12,7 @@ from .schemas import ModelVersions
 MODEL_VERSIONS = ModelVersions(
     detector="YuNet 2023mar",
     recognizer="SFace 2021dec",
-    liveness="Facenox MiniFASNetV2-SE 98.20 FP32",
+    liveness="Facenox MiniFASNetV2-SE 98.20 FP32 + YOLOX-S phone check",
 )
 
 MIN_FACE_PIXELS = 80
@@ -72,9 +72,23 @@ def _quality_ok(frame, face):
     )
 
 
+PHONE_CLASS = 67  # COCO cell phone
+PHONE_INPUT_SIZE = 640
+
+
+def _phone_input(frame):
+    """Letterbox the full frame as BGR pixels, as in the upstream YOLOX export."""
+    height, width = frame.shape[:2]
+    scale = PHONE_INPUT_SIZE / max(height, width)
+    resized = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))))
+    padded = np.full((PHONE_INPUT_SIZE, PHONE_INPUT_SIZE, 3), 114, dtype=np.uint8)
+    padded[:resized.shape[0], :resized.shape[1]] = resized
+    return np.ascontiguousarray(padded.transpose(2, 0, 1)[None], dtype=np.float32)
+
+
 class Vision:
     def __init__(self, model_dir: Path):
-        for name in ("yunet.onnx", "sface.onnx", "minifasnet.onnx"):
+        for name in ("yunet.onnx", "sface.onnx", "minifasnet.onnx", "yolox-s.onnx"):
             if not (model_dir / name).is_file():
                 raise FileNotFoundError(model_dir / name)
 
@@ -89,11 +103,27 @@ class Vision:
             str(model_dir / "minifasnet.onnx"), sess_options=options, providers=["CPUExecutionProvider"]
         )
         self.liveness_input = self.liveness.get_inputs()[0].name
+        self.phone_detector = ort.InferenceSession(
+            str(model_dir / "yolox-s.onnx"), sess_options=options, providers=["CPUExecutionProvider"]
+        )
+        self.phone_input = self.phone_detector.get_inputs()[0].name
 
         # Initialize the native execution paths before the first timed attempt.
         self.detector.detect(np.zeros((480, 640, 3), dtype=np.uint8))
         self.recognizer.feature(np.zeros((112, 112, 3), dtype=np.uint8))
         self._live_score(np.zeros((1, 3, 128, 128), dtype=np.float32))
+        self.phone_score(np.zeros((480, 640, 3), dtype=np.uint8))
+
+    def phone_score(self, frame):
+        output, = self.phone_detector.run(None, {self.phone_input: _phone_input(frame)})
+        candidates = output[0]
+        # Check the phone class directly. NMS and argmax over all classes can
+        # suppress a partially visible phone behind a stronger person box.
+        scores = candidates[:, 4] * candidates[:, 5 + PHONE_CLASS]
+        score = float(np.max(scores))
+        if not isfinite(score) or not 0 <= score <= 1:
+            raise ValueError("Invalid phone detector score")
+        return score
 
     def _live_score(self, tensor):
         # The pinned Facenox export uses index 0 for real and 1 for spoof.

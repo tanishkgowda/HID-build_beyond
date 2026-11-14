@@ -35,6 +35,7 @@ from .vision import MIN_FACE_PIXELS, MIN_VISIBLE_FACE_FRACTION, MODEL_VERSIONS, 
 
 ROOT = Path(__file__).resolve().parents[1]
 ATTEMPT_DEADLINE_MS = 1800
+PHONE_DENY_SCORE = 0.05
 SECOND_CHECK_WINDOW_SECONDS = 60
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
 LOCAL_ORIGINS = {
@@ -100,7 +101,16 @@ def capture_and_analyze(camera, vision, deadline, timings):
 
 def verify_frames(camera, vision, template, deadline, timings):
     try:
-        readings = capture_and_analyze(camera, vision, deadline, timings)
+        with timings.measure("capture"):
+            frames = camera.sample(FRAME_COUNT, deadline)
+        for frame in frames:
+            check_deadline(deadline)
+            with timings.measure("liveness"):
+                phone_score = vision.phone_score(frame)
+            check_deadline(deadline)
+            if phone_score >= PHONE_DENY_SCORE:
+                return Decision("DENY", "phone_detected"), None, None, []
+        readings = [vision.analyze(frame, timings, lambda: check_deadline(deadline)) for frame in frames]
     except CameraUnavailable:
         with timings.measure("policy"):
             return (*decide_frames([], issue="camera_unavailable"), [])
@@ -408,6 +418,15 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
             try:
                 deadline = monotonic() + 1
                 frame, = camera.sample(1, deadline)
+                phone_score = vision.phone_score(frame)
+                check_deadline(deadline)
+                if phone_score >= PHONE_DENY_SCORE:
+                    check = SecondCheck(
+                        attempt_id=attempt_id, outcome="DENY", reason="second_check_object_detected",
+                        second_check_ms=round((monotonic() - start) * 1000),
+                    )
+                    store.save_second_check(check)
+                    return check
                 reading = vision.analyze(frame, Timings(), lambda: check_deadline(deadline))
                 if reading.issue is None and reading.embedding is not None and template is not None:
                     similarity = float(np.dot(reading.embedding, template))

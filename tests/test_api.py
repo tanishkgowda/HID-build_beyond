@@ -48,6 +48,10 @@ def use_test_frames(monkeypatch):
         liveness = .98
         delay = 0
         match_index = 0
+        phone_scores = iter(())
+
+        def phone_score(self, frame):
+            return next(self.phone_scores, 0.0)
 
         def analyze(self, frame, timings, check_deadline):
             sleep(self.delay)
@@ -214,3 +218,13 @@ def test_jev_configured_holds_local_allow_without_client_flag(tmp_path, monkeypa
         assert rows[0]["second_check"]["outcome"] == "DENY"
         again = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID, "require_jev": False}).json()
         assert again["reason"] == "jev_required" and again["outcome"] == "REQUEST_VERIFICATION"
+
+
+def test_weak_phone_detection_denies_before_jev(tmp_path, monkeypatch):
+    vision = use_test_frames(monkeypatch)
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.post("/api/enroll", json={"name": "Teammate", "participant_id": PARTICIPANT_ID}).status_code == 200
+        vision.phone_scores = iter((0.02, 0.06))
+        attempt = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
+        assert (attempt["outcome"], attempt["reason"]) == ("DENY", "phone_detected")
+        assert attempt["second_check"] is None

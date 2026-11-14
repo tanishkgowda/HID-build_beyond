@@ -97,5 +97,5 @@ def test_scene_jpeg_preserves_the_full_frame():
 
 def test_visible_phone_or_paper_overrides_a_high_live_score():
     payload = answer("live_person", {"live_person": .98})
-    payload["answers"]["visible_phone_or_paper"] = {"type": "noul", "noul": .91}
+    payload["answers"]["visible_phone_or_paper"] = {"type": "noul", "noul": .28}
     assert jev.parse_response(payload).outcome() == "DENY"

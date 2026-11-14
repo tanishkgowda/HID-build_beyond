@@ -28,7 +28,7 @@ const HEALTH_POLL_MS = 5000;
 const PRESENCE_POLL_MS = 150;
 const REARM_AFTER_MS = 350;
 const SECOND_CHECK_MESSAGE: Record<SecondCheck['reason'], string> = {
-  second_check_object_detected: 'Phone or paper detected. Remove it from view and try again.',
+  second_check_object_detected: 'Spoof detected. Remove the phone or paper from view and try again.',
   second_check_passed: 'Identity and scene checks passed.',
   second_check_spoof: 'The second check found evidence of a spoof.',
   second_check_recapture: 'The second check could not establish liveness. Try a fresh capture.',
