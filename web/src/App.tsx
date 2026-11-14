@@ -20,6 +20,12 @@ import {
   UI_DEADLINE_MESSAGE,
 } from './messages';
 import { ThemeToggle } from './theme';
+import { ScoreMeter, SessionMetrics, TimeBreakdown } from './Metrics';
+import type { Thresholds } from './api';
+
+/** Session metrics read this many attempts (the API maximum); the table shows the newest few. */
+const METRICS_LIMIT = 1000;
+const TABLE_ROWS = 50;
 
 const HEALTH_POLL_MS = 5000;
 
@@ -116,7 +122,7 @@ export default function App() {
 
   const refreshAttempts = useCallback(async () => {
     try {
-      setAttempts(await api.attempts(50));
+      setAttempts(await api.attempts(METRICS_LIMIT));
     } catch (e) {
       setNotice(`Could not load recent attempts: ${errMessage(e)}`);
     }
@@ -449,7 +455,12 @@ export default function App() {
               {verifyBlocker && <p className="hint">{verifyBlocker}</p>}
             </div>
 
-            <OutcomeCard shown={shown} verifying={verifying} onLabel={labelScenario} />
+            <OutcomeCard
+              shown={shown}
+              verifying={verifying}
+              thresholds={health?.thresholds}
+              onLabel={labelScenario}
+            />
           </div>
 
           <details className="enroll">
@@ -490,17 +501,27 @@ export default function App() {
           </details>
         </section>
 
+        <SessionMetrics attempts={attempts} />
+
         <section className="surface attempts-panel" aria-label="Recent attempts">
           <div className="section-head">
             <h2>
               Recent attempts
-              {attempts.length > 0 && <span className="count">{attempts.length}</span>}
+              {attempts.length > 0 && (
+                <span className="count">
+                  {attempts.length > TABLE_ROWS ? `${TABLE_ROWS} of ${attempts.length}` : attempts.length}
+                </span>
+              )}
             </h2>
             <button className="btn btn-secondary btn-sm" onClick={() => void refreshAttempts()}>
               Refresh
             </button>
           </div>
-          <AttemptsTable attempts={attempts} nameOf={nameOf} onLabel={labelScenario} />
+          <AttemptsTable
+            attempts={attempts.slice(0, TABLE_ROWS)}
+            nameOf={nameOf}
+            onLabel={labelScenario}
+          />
         </section>
       </main>
     </div>
@@ -567,9 +588,10 @@ function OutcomeIcon({ outcome }: { outcome: Outcome }) {
 function OutcomeCard(props: {
   shown: Shown | null;
   verifying: boolean;
+  thresholds: Thresholds | undefined;
   onLabel: (attemptId: string, scenario: Scenario) => void;
 }) {
-  const { shown, verifying, onLabel } = props;
+  const { shown, verifying, thresholds, onLabel } = props;
 
   if (verifying) {
     return (
@@ -606,22 +628,37 @@ function OutcomeCard(props: {
       </div>
       <p className="outcome-msg">{shown.message}</p>
 
+      <div className="scores">
+        <ScoreMeter
+          label="Liveness"
+          value={a?.liveness_score}
+          pass={thresholds?.live_pass}
+          deny={thresholds?.spoof_deny}
+        />
+        <ScoreMeter
+          label="Identity match"
+          value={a?.match_score}
+          pass={thresholds?.match_pass}
+          deny={thresholds?.mismatch_deny}
+        />
+      </div>
+
       <dl className="metrics">
         <div>
-          <dt>Liveness</dt>
-          <dd>{fmtScore(a?.liveness_score)}</dd>
-        </div>
-        <div>
-          <dt>Match</dt>
-          <dd>{fmtScore(a?.match_score)}</dd>
-        </div>
-        <div>
-          <dt>Click → result</dt>
+          <dt>Decision time</dt>
           <dd>{fmtMs(shown.clickToRenderMs)}</dd>
         </div>
         <div>
           <dt>Server</dt>
           <dd>{fmtMs(a?.elapsed_ms)}</dd>
+        </div>
+        <div>
+          <dt>Usable frames</dt>
+          <dd>
+            {a && a.frames.length > 0
+              ? `${a.frames.filter((f) => f.face_found && f.quality_ok).length} / ${a.frames.length}`
+              : '—'}
+          </dd>
         </div>
       </dl>
 
@@ -634,6 +671,13 @@ function OutcomeCard(props: {
       )}
       {!a && shown.errorCode && !shown.uiDeadlineMissed && (
         <p className="flag">No attempt recorded ({shown.errorCode}).</p>
+      )}
+
+      {a && (
+        <label className="field-inline scenario-row">
+          <span>Scenario</span>
+          <ScenarioSelect value={a.scenario} onChange={(s) => onLabel(a.attempt_id, s)} />
+        </label>
       )}
 
       {a && (
@@ -664,15 +708,7 @@ function OutcomeCard(props: {
               ))}
             </tbody>
           </table>
-          <p className="stages">
-            {Object.entries(a.stage_ms)
-              .map(([k, v]) => `${k} ${v} ms`)
-              .join(' · ')}
-          </p>
-          <label className="field-inline">
-            <span>Scenario</span>
-            <ScenarioSelect value={a.scenario} onChange={(s) => onLabel(a.attempt_id, s)} />
-          </label>
+          <TimeBreakdown attempt={a} clickToRenderMs={shown.clickToRenderMs} />
         </details>
       )}
     </div>

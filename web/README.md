@@ -18,6 +18,8 @@ npm --prefix web run build        # writes web/dist, which FastAPI serves at /
 | --- | --- |
 | `src/api.ts` | Types from `docs/api.md`, one function per endpoint, `USE_MOCK`, `UI_DEADLINE_MS = 2000` |
 | `src/mock.ts` | In-memory fake backend. About 1 in 8 verifies answers late, to exercise the UI deadline |
+| `src/stats.ts` | Session statistics with the same definitions as `scripts/evaluate.py`: median, nearest-rank p95, attack and genuine groups, within-2 s |
+| `src/Metrics.tsx` | Score meters, the "where the time went" breakdown, and the Session metrics section (tiles, by-scenario table, decision-time histogram) |
 | `src/messages.ts` | Outcome titles, reason messages people can act on, scenario labels |
 | `src/App.tsx` | Camera start/stop and preview, participant picker, enrollment, Verify, outcome card, recent attempts with the scenario dropdown |
 | `src/styles.css` | Design tokens (neutral palette, 8px spacing scale, Inter) and all component styles. ALLOW is green, REQUEST_VERIFICATION amber, DENY red. Single column below 980 px |
