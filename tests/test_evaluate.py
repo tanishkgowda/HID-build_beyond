@@ -44,7 +44,7 @@ def test_report_counts_by_scenario(tmp_path):
     seed(db)
     out = tmp_path / "results"
     evaluate.main(["--db", str(db), "--out", str(out), "--sweep"])
-    report = json.loads((out / "metrics.json").read_text())
+    report = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
 
     assert report["total_attempts"] == 7 and report["unlabeled"] == 1
     assert report["all_attacks"]["n"] == 3
@@ -54,9 +54,9 @@ def test_report_counts_by_scenario(tmp_path):
     assert report["all_labeled"]["server_deadline_missed"] == 1
     assert report["all_labeled"]["ui_deadline_missed"] == 1
     assert report["all_labeled"]["within_ui_deadline"] == 4
-    summary = (out / "summary.md").read_text()
+    summary = (out / "summary.md").read_text(encoding="utf-8")
     assert "1 attempt(s) are unlabeled" in summary and "Threshold sweep" in summary
-    assert (out / "attempts.csv").read_text().count("\n") == 8
+    assert (out / "attempts.csv").read_text(encoding="utf-8").count("\n") == 8
 
 
 def test_percentile_is_nearest_rank():
