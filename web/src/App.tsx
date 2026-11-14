@@ -43,6 +43,7 @@ interface AttemptCtx {
   start: number;
   closed: boolean;
   renderedMs: number | null;
+  lateAttemptId: string | null;
 }
 
 const fmtScore = (n: number | null | undefined) => (n == null ? '—' : n.toFixed(2));
@@ -196,6 +197,13 @@ export default function App() {
     setVerifying(false);
   };
 
+  const saveClientTiming = useCallback((attemptId: string, ms: number, missed: boolean) => {
+    void api
+      .sendClientTiming(attemptId, ms, missed)
+      .then(() => refreshAttempts())
+      .catch((e) => setNotice(`Could not save the client timing: ${errMessage(e)}`));
+  }, [refreshAttempts]);
+
   const verify = async () => {
     if (!selectedId || verifying || serverBusy) return;
     const ctx: AttemptCtx = {
@@ -203,6 +211,7 @@ export default function App() {
       start: performance.now(),
       closed: false,
       renderedMs: null,
+      lateAttemptId: null,
     };
     ctxRef.current = ctx;
     setVerifying(true);
@@ -210,7 +219,7 @@ export default function App() {
     setShown(null);
 
     // UI deadline: close the attempt ourselves and keep access closed.
-    const timer = window.setTimeout(() => {
+    const closeAtDeadline = () => {
       if (ctx.closed) return;
       ctx.closed = true;
       show(ctx, {
@@ -221,13 +230,15 @@ export default function App() {
         uiDeadlineMissed: true,
         errorCode: null,
       });
-    }, UI_DEADLINE_MS);
+    };
+    const timer = window.setTimeout(closeAtDeadline, UI_DEADLINE_MS);
 
     try {
       const attempt = await api.verify(selectedId);
+      if (performance.now() - ctx.start >= UI_DEADLINE_MS) closeAtDeadline();
+      window.clearTimeout(timer);
       if (!ctx.closed) {
         ctx.closed = true;
-        window.clearTimeout(timer);
         show(ctx, {
           outcome: attempt.outcome,
           reason: attempt.reason,
@@ -239,16 +250,16 @@ export default function App() {
       } else {
         // Late response: don't display it. Report the miss, with the time at
         // which the fallback REQUEST_VERIFICATION reached the screen.
-        const ms = ctx.renderedMs ?? Math.round(performance.now() - ctx.start);
-        api
-          .sendClientTiming(attempt.attempt_id, ms, true)
-          .then(() => refreshAttempts())
-          .catch((e) => setNotice(`Could not report the UI deadline miss: ${errMessage(e)}`));
+        ctx.lateAttemptId = attempt.attempt_id;
+        if (ctx.renderedMs !== null) {
+          saveClientTiming(attempt.attempt_id, ctx.renderedMs, true);
+        }
       }
     } catch (e) {
+      if (performance.now() - ctx.start >= UI_DEADLINE_MS) closeAtDeadline();
+      window.clearTimeout(timer);
       if (!ctx.closed) {
         ctx.closed = true;
-        window.clearTimeout(timer);
         const code = e instanceof ApiError ? e.code : 'error';
         show(ctx, {
           outcome: 'REQUEST_VERIFICATION',
@@ -276,15 +287,11 @@ export default function App() {
       const ms = Math.round(performance.now() - ctx.start);
       ctx.renderedMs = ms;
       setShown((s) => (s && s.seq === ctx.seq ? { ...s, clickToRenderMs: ms } : s));
-      if (shown.attempt && !shown.uiDeadlineMissed) {
-        api
-          .sendClientTiming(shown.attempt.attempt_id, ms, false)
-          .then(() => refreshAttempts())
-          .catch((e) => setNotice(`Could not save the client timing: ${errMessage(e)}`));
-      }
+      const attemptId = shown.attempt?.attempt_id ?? ctx.lateAttemptId;
+      if (attemptId) saveClientTiming(attemptId, ms, shown.uiDeadlineMissed);
     });
     return () => cancelAnimationFrame(frame);
-  }, [shown, refreshAttempts]);
+  }, [shown, saveClientTiming]);
 
   // ---------------------------------------------------------------------------
   // Scenario labels (used by C during rehearsal)
