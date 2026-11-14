@@ -20,17 +20,19 @@ from starlette.exceptions import HTTPException
 import numpy as np
 
 from .camera import Camera, CameraUnavailable
-from .policy import FRAME_COUNT, LIVE_PASS, decide_frames, valid_liveness, valid_match
+from .jev import JevClient, face_crop_jpeg
+from .policy import FRAME_COUNT, LIVE_PASS, MATCH_PASS, SPOOF_DENY, decide_frames, valid_liveness, valid_match
 from .schemas import (
     Attempt, AttemptReference, CameraStart, CameraStarted, CameraStopped,
     ClientTiming, Enrollment, EnrollmentRequest, FrameEvidence, Health, Participant,
-    ScenarioUpdate, ScenarioUpdated, StageTimes, VerificationRequest,
+    ScenarioUpdate, ScenarioUpdated, SecondCheck, SecondCheckRequest, StageTimes, VerificationRequest,
 )
 from .store import Store
 from .vision import MODEL_VERSIONS, Vision, unit_embedding
 
 ROOT = Path(__file__).resolve().parents[1]
 ATTEMPT_DEADLINE_MS = 1800
+SECOND_CHECK_WINDOW_SECONDS = 60
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
 LOCAL_ORIGINS = {
     f"http://{host}:{port}"
@@ -130,10 +132,17 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
     web_dir = Path(web_dir or ROOT / "web" / "dist")
     camera = Camera()
     operation = Lock()
+    jev_operation = Lock()
 
     @asynccontextmanager
     async def lifespan(app):
         app.state.store = Store(data_dir / "kiosk.sqlite")
+        app.state.jev = None
+        if os.environ.get("TYPESAFE_API_KEY", "").strip():
+            try:
+                app.state.jev = JevClient()
+            except (RuntimeError, ValueError):
+                LOGGER.warning("Jev configuration is invalid. Local verification is still available.")
         app.state.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verification")
         try:
             app.state.vision = await run_in_threadpool(Vision, model_dir)
@@ -205,6 +214,7 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
             models_loaded=app.state.vision is not None,
             camera_running=camera.running,
             model_versions=MODEL_VERSIONS,
+            jev_enabled=app.state.jev is not None,
         )
 
     @app.post("/api/camera/start", response_model=CameraStarted)
@@ -320,6 +330,83 @@ def create_app(data_dir=None, model_dir=None, web_dir=None):
         )
         await run_in_threadpool(store.save_attempt, attempt)
         return attempt
+
+    @app.post("/api/attempts/{attempt_id}/second_check", response_model=SecondCheck)
+    def second_check(attempt_id: str, body: SecondCheckRequest):
+        if body.consent is not True:
+            raise ApiError(422, "consent_required", "Confirm that the camera crop may be sent to TypeSafe.")
+        client = app.state.jev
+        if client is None:
+            raise ApiError(503, "jev_unavailable", "Jev is not configured on this kiosk.")
+        if not jev_operation.acquire(blocking=False):
+            raise ApiError(409, "busy", "Another Jev check is in progress.")
+        try:
+            return run_second_check(attempt_id, client)
+        finally:
+            jev_operation.release()
+
+    def run_second_check(attempt_id, client):
+        start = monotonic()
+        store = app.state.store
+        source = store.second_check_source(attempt_id)
+        if source is None:
+            raise ApiError(404, "attempt_not_found", "This attempt could not be found.")
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(source["created_at"])).total_seconds()
+        if (
+            source["outcome"] != "REQUEST_VERIFICATION"
+            or source["reason"] != "uncertain_liveness"
+            or not valid_match(source["match_score"])
+            or source["match_score"] < MATCH_PASS
+            or source["ui_deadline_missed"]
+            or age > SECOND_CHECK_WINDOW_SECONDS
+        ):
+            raise ApiError(409, "jev_not_eligible", "Run a fresh local check before trying Jev.")
+
+        with exclusive_operation():
+            vision = loaded_vision()
+            if not store.claim_second_check(attempt_id):
+                raise ApiError(409, "jev_already_checked", "Jev already checked this attempt. Run a fresh local check.")
+            template = store.template(source["participant_id"])
+            reason = "second_check_unavailable"
+            outcome = "REQUEST_VERIFICATION"
+            jpeg = None
+            try:
+                deadline = monotonic() + 1
+                frame, = camera.sample(1, deadline)
+                reading = vision.analyze(frame, Timings(), lambda: check_deadline(deadline))
+                if reading.issue is None and reading.embedding is not None and template is not None:
+                    similarity = float(np.dot(reading.embedding, template))
+                    if not np.isfinite(similarity) or similarity < MATCH_PASS:
+                        reason = "second_check_identity_unconfirmed"
+                    elif valid_liveness(reading.liveness_score) and reading.liveness_score <= SPOOF_DENY:
+                        reason = "second_check_spoof"
+                        outcome = "DENY"
+                    elif valid_liveness(reading.liveness_score) and reading.face_box is not None:
+                        jpeg = face_crop_jpeg(frame, reading.face_box)
+                elif reading.embedding is None and reading.issue is None:
+                    reason = "second_check_identity_unconfirmed"
+            except (CameraUnavailable, TimeoutError):
+                pass
+
+        # The hosted call does not own the camera. The original attempt stays intact.
+        result = client.check(jpeg) if jpeg is not None else None
+        if result is not None and not result.error:
+            if result.outcome() == "DENY":
+                reason = "second_check_spoof"
+                outcome = "DENY"
+            else:
+                reason = "second_check_recapture"
+        live_probability = result.live_probability if result is not None else None
+        check = SecondCheck(
+            attempt_id=attempt_id, outcome=outcome, reason=reason,
+            jev_label=result.label if result is not None else None,
+            jev_live_probability=live_probability if valid_liveness(live_probability) else None,
+            model=result.model if result is not None else None,
+            jev_ms=result.latency_ms if result is not None else None,
+            second_check_ms=round((monotonic() - start) * 1000),
+        )
+        store.save_second_check(check)
+        return check
 
     @app.get("/api/attempts", response_model=list[Attempt])
     def attempts(limit: Annotated[int, Query(ge=1, le=1000)] = 50):

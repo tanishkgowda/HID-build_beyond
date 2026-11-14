@@ -15,6 +15,7 @@ import base64
 import json
 import os
 from dataclasses import dataclass, field
+from math import isfinite
 from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -95,6 +96,9 @@ def build_request(jpeg_bytes, model):
 def parse_response(payload):
     answer = payload["answers"][QUESTION_ID]
     probabilities = {str(k): float(v) for k, v in (answer.get("probabilities") or {}).items()}
+    if any(key not in LABELS or not isfinite(value) or not 0 <= value <= 1
+           for key, value in probabilities.items()) or sum(probabilities.values()) > 1.01:
+        raise ValueError("Invalid Jev choice probabilities")
     label = answer.get("choice")
     if label not in LABELS:
         raise ValueError(f"Unexpected Jev choice: {label!r}")
@@ -107,7 +111,9 @@ class JevClient:
         self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY")
         self.model = model or os.environ.get("JEV_MODEL", DEFAULT_MODEL)
         self.url = url or os.environ.get("JEV_URL", DEFAULT_URL)
-        self.timeout = int(timeout_ms or os.environ.get("JEV_TIMEOUT_MS", 1500)) / 1000
+        self.timeout = int(timeout_ms if timeout_ms is not None else os.environ.get("JEV_TIMEOUT_MS", 1500)) / 1000
+        if self.timeout <= 0:
+            raise ValueError("Jev timeout must be positive.")
         if not self.api_key:
             raise RuntimeError("Set TYPESAFE_API_KEY to use Jev.")
 

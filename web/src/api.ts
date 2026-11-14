@@ -57,6 +57,7 @@ export function isReason(code: string): code is Reason {
 
 export interface Health {
   models_loaded: boolean;
+  jev_enabled?: boolean;
   camera_running: boolean;
   model_versions: { detector: string; recognizer: string; liveness: string };
 }
@@ -100,6 +101,19 @@ export interface StageMs {
   policy: number;
 }
 
+export interface SecondCheck {
+  attempt_id: string;
+  method: 'jev';
+  jev_label: string | null;
+  jev_live_probability: number | null;
+  model: string | null;
+  outcome: 'DENY' | 'REQUEST_VERIFICATION';
+  reason: 'second_check_spoof' | 'second_check_recapture' |
+    'second_check_unavailable' | 'second_check_identity_unconfirmed';
+  second_check_ms: number;
+  jev_ms: number | null;
+}
+
 export interface Attempt {
   attempt_id: string;
   participant_id: string;
@@ -113,6 +127,7 @@ export interface Attempt {
   elapsed_ms: number;
   deadline_missed: boolean;
   scenario: Scenario;
+  second_check?: SecondCheck | null;
   click_to_render_ms: number | null;
   ui_deadline_missed: boolean | null;
 }
@@ -152,6 +167,7 @@ export interface KioskApi {
   participants(): Promise<Participant[]>;
   enroll(name: string, participantId?: string): Promise<EnrollResult>;
   verify(participantId: string): Promise<Attempt>;
+  secondCheck(attemptId: string): Promise<SecondCheck>;
   attempts(limit?: number): Promise<Attempt[]>;
   setScenario(attemptId: string, scenario: Scenario): Promise<ScenarioResult>;
   sendClientTiming(
@@ -220,6 +236,8 @@ const realApi: KioskApi = {
     ),
   verify: (participantId) =>
     request<Attempt>('POST', '/verify', { participant_id: participantId }),
+  secondCheck: (attemptId) =>
+    request<SecondCheck>('POST', `/attempts/${encodeURIComponent(attemptId)}/second_check`, { consent: true }),
   attempts: (limit = 50) => request<Attempt[]>('GET', `/attempts?limit=${limit}`),
   setScenario: (attemptId, scenario) =>
     request<ScenarioResult>('POST', `/attempts/${encodeURIComponent(attemptId)}/scenario`, {

@@ -104,6 +104,10 @@ export function createMockApi(makeError: MakeError): KioskApi {
       };
     },
 
+    async secondCheck() {
+      throw makeError('jev_unavailable', 'Jev is unavailable in mock mode.', 503);
+    },
+
     async startCamera(index) {
       await sleep(rand(300, 700));
       cameraRunning = true;

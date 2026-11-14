@@ -47,11 +47,15 @@ def use_test_frames(monkeypatch):
     class TestVision:
         liveness = .98
         delay = 0
+        match_index = 0
 
         def analyze(self, frame, timings, check_deadline):
             sleep(self.delay)
             check_deadline()
-            return FrameAnalysis(face_found=True, liveness_score=self.liveness, embedding=template)
+            return FrameAnalysis(
+                face_found=True, liveness_score=self.liveness, embedding=np.roll(template, self.match_index),
+                face_box=np.array([0, 0, 100, 100]),
+            )
 
     vision = TestVision()
     monkeypatch.setattr(main, "Vision", lambda model_dir: vision)
@@ -110,3 +114,48 @@ def test_deadline_returns_retry_and_never_saves_late_allow(tmp_path, monkeypatch
         assert client.post("/api/camera/stop").status_code == 409
         sleep(.45)
         assert client.get("/api/attempts").json() == [attempt]
+
+
+def test_jev_second_check_is_opt_in_matches_identity_and_runs_once(tmp_path, monkeypatch):
+    from app.jev import JevResult
+
+    app = create_app(tmp_path)
+    vision = use_test_frames(monkeypatch)
+    calls = []
+
+    class Client:
+        def check(self, jpeg):
+            calls.append(jpeg)
+            return JevResult(label="live_person", probabilities={"live_person": .96}, latency_ms=700)
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "fixture")
+    monkeypatch.setattr(main, "JevClient", Client, raising=False)
+    monkeypatch.setattr(main, "face_crop_jpeg", lambda frame, box: b"jpeg", raising=False)
+
+    with TestClient(app) as client:
+        assert client.post("/api/enroll", json={"name": "Teammate", "participant_id": PARTICIPANT_ID}).status_code == 200
+        first = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
+        url = f"/api/attempts/{first['attempt_id']}/second_check"
+        assert client.post(url, json={"consent": True}).status_code == 409
+
+        vision.liveness = .8
+        uncertain = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
+        assert uncertain["reason"] == "uncertain_liveness"
+        assert calls == []
+        url = f"/api/attempts/{uncertain['attempt_id']}/second_check"
+        assert client.post(url, json={"consent": False}).status_code == 422
+        assert calls == []
+        response = client.post(url, json={"consent": True})
+        assert response.status_code == 200, response.text
+        assert response.json()["outcome"] == "REQUEST_VERIFICATION"
+        assert response.json()["jev_label"] == "live_person"
+        assert response.json()["jev_ms"] == 700
+        assert client.post(url, json={"consent": True}).status_code == 409
+        assert calls == [b"jpeg"]
+        assert client.get("/api/attempts").json()[0]["reason"] == "uncertain_liveness"
+
+        another = client.post("/api/verify", json={"participant_id": PARTICIPANT_ID}).json()
+        vision.match_index = 1
+        failed = client.post(f"/api/attempts/{another['attempt_id']}/second_check", json={"consent": True})
+        assert failed.json()["reason"] == "second_check_identity_unconfirmed"
+        assert len(calls) == 1

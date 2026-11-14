@@ -4,7 +4,7 @@ import sqlite3
 
 import numpy as np
 
-from .schemas import Attempt, Participant
+from .schemas import Attempt, Participant, SecondCheck
 
 
 class Store:
@@ -35,6 +35,10 @@ class Store:
                     scenario TEXT NOT NULL,
                     click_to_render_ms INTEGER,
                     ui_deadline_missed INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS second_checks (
+                    attempt_id TEXT PRIMARY KEY REFERENCES attempts(attempt_id),
+                    result TEXT
                 );
             """)
 
@@ -69,7 +73,7 @@ class Store:
         return [Participant(**dict(row)) for row in rows]
 
     def save_attempt(self, attempt: Attempt):
-        values = attempt.model_dump(mode="json")
+        values = attempt.model_dump(mode="json", exclude={"second_check"})
         for field in ("frames", "stage_ms"):
             values[field] = json.dumps(values[field], allow_nan=False)
         with closing(self._connect()) as db, db:
@@ -88,13 +92,18 @@ class Store:
     def attempts(self, limit):
         with closing(self._connect()) as db:
             rows = db.execute(
-                "SELECT * FROM attempts ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)
+                """
+                SELECT a.*, s.result AS second_check
+                FROM attempts a LEFT JOIN second_checks s USING (attempt_id)
+                ORDER BY a.created_at DESC, a.rowid DESC LIMIT ?
+                """, (limit,)
             ).fetchall()
         attempts = []
         for row in rows:
             fields = dict(row)
-            for field in ("frames", "stage_ms"):
-                fields[field] = json.loads(fields[field])
+            for field in ("frames", "stage_ms", "second_check"):
+                if fields[field] is not None:
+                    fields[field] = json.loads(fields[field])
             attempts.append(Attempt(**fields))
         return attempts
 
@@ -110,3 +119,25 @@ class Store:
                 WHERE attempt_id = ?
             """, (click_to_render_ms, ui_deadline_missed, attempt_id))
             return cursor.rowcount == 1
+
+
+    def second_check_source(self, attempt_id):
+        with closing(self._connect()) as db:
+            return db.execute(
+                "SELECT participant_id, created_at, outcome, reason, match_score, ui_deadline_missed "
+                "FROM attempts WHERE attempt_id = ?", (attempt_id,),
+            ).fetchone()
+
+    def claim_second_check(self, attempt_id):
+        with closing(self._connect()) as db, db:
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO second_checks (attempt_id) VALUES (?)", (attempt_id,),
+            )
+            return cursor.rowcount == 1
+
+    def save_second_check(self, result: SecondCheck):
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "UPDATE second_checks SET result = ? WHERE attempt_id = ?",
+                (result.model_dump_json(), result.attempt_id),
+            )

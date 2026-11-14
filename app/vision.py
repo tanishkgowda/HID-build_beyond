@@ -27,6 +27,7 @@ class FrameAnalysis:
     issue: str | None = None
     liveness_score: float | None = None
     embedding: np.ndarray | None = None
+    face_box: np.ndarray | None = None
 
 
 def unit_embedding(vector):
@@ -125,4 +126,4 @@ class Vision:
             aligned = self.recognizer.alignCrop(frame, face)
             embedding = unit_embedding(self.recognizer.feature(aligned).reshape(-1))
         check_deadline()
-        return FrameAnalysis(True, liveness_score=liveness, embedding=embedding)
+        return FrameAnalysis(True, liveness_score=liveness, embedding=embedding, face_box=face[:4])

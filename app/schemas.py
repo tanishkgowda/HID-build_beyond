@@ -41,6 +41,7 @@ class Health(BaseModel):
     models_loaded: bool
     camera_running: bool
     model_versions: ModelVersions
+    jev_enabled: bool = False
 
 
 class EnrollmentRequest(BaseModel):
@@ -96,6 +97,7 @@ class Attempt(BaseModel):
     scenario: Scenario = "unlabeled"
     click_to_render_ms: Milliseconds | None = None
     ui_deadline_missed: bool | None = None
+    second_check: "SecondCheck | None" = None
 
 
 class ScenarioUpdate(BaseModel):
@@ -113,3 +115,21 @@ class AttemptReference(BaseModel):
 
 class ScenarioUpdated(AttemptReference):
     scenario: Scenario
+
+
+class SecondCheckRequest(BaseModel):
+    consent: bool = Field(strict=True)
+
+
+class SecondCheck(AttemptReference):
+    method: Literal["jev"] = "jev"
+    jev_label: str | None = None
+    jev_live_probability: LivenessScore | None = None
+    model: str | None = None
+    outcome: Literal["DENY", "REQUEST_VERIFICATION"]
+    reason: Literal[
+        "second_check_spoof", "second_check_recapture", "second_check_unavailable",
+        "second_check_identity_unconfirmed",
+    ]
+    second_check_ms: Milliseconds
+    jev_ms: Milliseconds | None = None

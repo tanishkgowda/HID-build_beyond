@@ -12,6 +12,7 @@ import {
   type Participant,
   type Reason,
   type Scenario,
+  type SecondCheck,
 } from './api';
 import {
   OUTCOME_TITLE,
@@ -22,6 +23,18 @@ import {
 import { ThemeToggle } from './theme';
 
 const HEALTH_POLL_MS = 5000;
+const SECOND_CHECK_MESSAGE: Record<SecondCheck['reason'], string> = {
+  second_check_spoof: 'The second check found evidence of a spoof.',
+  second_check_recapture: 'The second check could not establish liveness. Try a fresh capture.',
+  second_check_unavailable: 'The second check was unavailable. Try a fresh capture.',
+  second_check_identity_unconfirmed: 'The fresh frame did not confirm the selected identity. Try again.',
+};
+const JEV_LABEL: Record<string, string> = {
+  live_person: 'Looks live',
+  printed_photo: 'Printed photo',
+  screen_or_video: 'Screen or video',
+  unclear: 'Unclear',
+};
 
 /** What the outcome card is showing. */
 interface Shown {
@@ -73,6 +86,7 @@ export default function App() {
   // Verification
   const [verifying, setVerifying] = useState(false); // UI attempt open
   const [serverBusy, setServerBusy] = useState(false); // request still in flight
+  const [jevBusy, setJevBusy] = useState(false);
   const [shown, setShown] = useState<Shown | null>(null);
   const seqRef = useRef(0);
   const ctxRef = useRef<AttemptCtx | null>(null);
@@ -166,7 +180,7 @@ export default function App() {
 
   const enroll = async () => {
     const name = enrollName.trim();
-    if (!name) return;
+    if (!name || enrolling || verifying || jevBusy || !cameraRunning) return;
     setEnrolling(true);
     setEnrollNote(null);
     try {
@@ -205,7 +219,7 @@ export default function App() {
   }, [refreshAttempts]);
 
   const verify = async () => {
-    if (!selectedId || verifying || serverBusy) return;
+    if (!selectedId || verifying || serverBusy || jevBusy) return;
     const ctx: AttemptCtx = {
       seq: ++seqRef.current,
       start: performance.now(),
@@ -314,6 +328,30 @@ export default function App() {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
+
+  const canRunJev = !!(
+    health?.jev_enabled && cameraRunning && !verifying && !serverBusy &&
+    shown?.attempt && shown.attempt.participant_id === selectedId &&
+    shown.attempt.reason === 'uncertain_liveness' &&
+    shown.clickToRenderMs !== null && !shown.uiDeadlineMissed && !shown.attempt.second_check
+  );
+
+  const runJev = async () => {
+    if (!canRunJev || !shown?.attempt || jevBusy) return;
+    const id = shown.attempt.attempt_id;
+    setJevBusy(true);
+    try {
+      const result = await api.secondCheck(id);
+      setShown((current) => current?.attempt?.attempt_id === id
+        ? { ...current, attempt: { ...current.attempt, second_check: result } }
+        : current);
+      void refreshAttempts();
+    } catch (e) {
+      setNotice(`Could not run the second check: ${errMessage(e)}`);
+    } finally {
+      setJevBusy(false);
+    }
+  };
 
   const verifyBlocker = !cameraRunning
     ? 'Start the camera first.'
@@ -442,7 +480,7 @@ export default function App() {
               <button
                 className="btn btn-primary btn-lg"
                 onClick={verify}
-                disabled={verifyBlocker !== null || verifying}
+                disabled={verifyBlocker !== null || verifying || jevBusy || enrolling}
               >
                 {verifying ? 'Verifying…' : 'Verify'}
               </button>
@@ -450,6 +488,27 @@ export default function App() {
             </div>
 
             <OutcomeCard shown={shown} verifying={verifying} onLabel={labelScenario} />
+            {shown?.attempt?.second_check && (
+              <div className="stack" aria-live="polite">
+                <strong>Jev second check · {OUTCOME_TITLE[shown.attempt.second_check.outcome]}</strong>
+                <p className="hint">{SECOND_CHECK_MESSAGE[shown.attempt.second_check.reason]}</p>
+                <p className="hint">
+                  {shown.attempt.second_check.jev_label &&
+                    `${JEV_LABEL[shown.attempt.second_check.jev_label] ?? 'Unclear'} · `}
+                  {fmtMs(shown.attempt.second_check.second_check_ms)} total
+                  {shown.attempt.second_check.jev_ms !== null &&
+                    ` · ${fmtMs(shown.attempt.second_check.jev_ms)} from TypeSafe`}
+                </p>
+              </div>
+            )}
+            {(canRunJev || jevBusy) && (
+              <div className="stack">
+                <p className="hint">With your consent, the kiosk sends one fresh camera crop to TypeSafe.</p>
+                <button className="btn btn-secondary" onClick={runJev} disabled={jevBusy}>
+                  {jevBusy ? 'Running second check…' : 'Consent and run Jev'}
+                </button>
+              </div>
+            )}
           </div>
 
           <details className="enroll">
@@ -473,7 +532,7 @@ export default function App() {
                 <button
                   className="btn btn-secondary"
                   onClick={enroll}
-                  disabled={enrolling || verifying || !cameraRunning || !enrollName.trim()}
+                  disabled={enrolling || verifying || jevBusy || !cameraRunning || !enrollName.trim()}
                 >
                   {enrolling ? 'Enrolling…' : 'Enroll'}
                 </button>

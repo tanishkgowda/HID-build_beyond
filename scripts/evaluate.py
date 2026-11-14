@@ -62,9 +62,13 @@ def load_sqlite(path):
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     try:
-        rows = db.execute("""
-            SELECT a.*, p.name AS participant_name
+        has_jev = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='second_checks'").fetchone()
+        check_column = ", s.result AS second_check" if has_jev else ""
+        check_join = "LEFT JOIN second_checks s USING (attempt_id)" if has_jev else ""
+        rows = db.execute(f"""
+            SELECT a.*, p.name AS participant_name {check_column}
             FROM attempts a LEFT JOIN participants p USING (participant_id)
+            {check_join}
             ORDER BY a.created_at, a.rowid
         """).fetchall()
     finally:
@@ -77,6 +81,8 @@ def load_sqlite(path):
         for field in ("deadline_missed", "ui_deadline_missed"):
             if item[field] is not None:
                 item[field] = bool(item[field])
+        if item.get("second_check"):
+            item["second_check"] = json.loads(item["second_check"])
         attempts.append(item)
     return attempts
 
@@ -157,6 +163,21 @@ def summarize(group):
     }
 
 
+def summarize_jev(attempts):
+    result = {}
+    for scenario in SCENARIOS:
+        checks = [a["second_check"] for a in attempts if a["scenario"] == scenario and a.get("second_check")]
+        if checks:
+            result[scenario] = {
+                "n": len(checks),
+                "denied": sum(c["outcome"] == "DENY" for c in checks),
+                "recapture": sum(c["outcome"] == "REQUEST_VERIFICATION" for c in checks),
+                "second_check_ms": latency([c["second_check_ms"] for c in checks]),
+                "jev_ms": latency([c["jev_ms"] for c in checks]),
+            }
+    return result
+
+
 def evaluate(attempts):
     by_scenario = {s: [a for a in attempts if a["scenario"] == s] for s in SCENARIOS}
     labeled = [a for a in attempts if a["scenario"] != "unlabeled"]
@@ -175,6 +196,7 @@ def evaluate(attempts):
             for a in attacks + by_scenario["wrong_identity"] if a["outcome"] == "ALLOW"
         ],
         "thresholds": DEFAULT_THRESHOLDS,
+        "jev_second_checks": summarize_jev(labeled),
     }
     return report
 
@@ -277,6 +299,16 @@ def markdown(report, source, sweeps=None):
     w(f"| Capture-quality retries (no face, several faces, poor quality) | "
       f"{frac(labeled['capture_retries'], labeled['n'])} |\n")
 
+    if report["jev_second_checks"]:
+        w("## Jev second checks\n")
+        w("| Scenario | Checks | Deny | Recapture | Total ms median / p95 / max | TypeSafe ms median / p95 / max |")
+        w("| --- | ---: | ---: | ---: | --- | --- |")
+        for name, g in report["jev_second_checks"].items():
+            total = " / ".join(ms(g["second_check_ms"][metric]) for metric in ("median", "p95", "max"))
+            hosted = " / ".join(ms(g["jev_ms"][metric]) for metric in ("median", "p95", "max"))
+            w(f"| {name} | {g['n']} | {g['denied']} | {g['recapture']} | {total} | {hosted} |")
+        w("")
+
     w("## By scenario\n")
     w("| Scenario | n | ALLOW | REQ. VERIF. | DENY | Capture retries | Server misses | UI misses "
       "| Server ms median / p95 / max | Click-to-render ms median / p95 / max |")
@@ -336,7 +368,8 @@ def write_csv(path, attempts):
     fields = ["created_at", "attempt_id", "participant_name", "participant_id", "scenario", "outcome",
               "reason", "liveness_score", "match_score", "elapsed_ms", "deadline_missed",
               "click_to_render_ms", "ui_deadline_missed", "capture_ms", "detect_ms", "liveness_ms",
-              "match_ms", "policy_ms", "frame_liveness", "frame_match"]
+              "match_ms", "policy_ms", "frame_liveness", "frame_match",
+              "second_check_outcome", "second_check_reason", "second_check_ms", "jev_ms", "jev_label", "jev_live_probability"]
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
@@ -348,6 +381,10 @@ def write_csv(path, attempts):
                                              for f in a["frames"])
             row["frame_match"] = ";".join("" if f["match_score"] is None else f"{f['match_score']:.4f}"
                                           for f in a["frames"])
+            check = a.get("second_check") or {}
+            row.update(second_check_outcome=check.get("outcome"), second_check_reason=check.get("reason"))
+            for field in ("second_check_ms", "jev_ms", "jev_label", "jev_live_probability"):
+                row[field] = check.get(field)
             writer.writerow(row)
 
 

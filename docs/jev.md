@@ -7,11 +7,11 @@ Jev is TypeSafe's hosted decision model. It returns a typed answer with probabil
 ```
 Verify ──► local pipeline (< 2 s) ──► ALLOW / DENY ──► done
                                   └─► REQUEST_VERIFICATION (uncertain_liveness, identity matched)
-                                          └─► Jev check on a fresh frame ──► ALLOW / DENY / ask to recapture
+                                          └─► Jev check on a fresh frame ──► DENY / ask to recapture
 ```
 
 - Jev runs only when the local result is `REQUEST_VERIFICATION` with reason `uncertain_liveness` and the identity score passed. It judges liveness, not identity.
-- Jev never overrides a local `DENY` and is never called on the fast path, so the two-second initial outcome is unaffected.
+- Jev runs after the initial local decision. The hosted request has its own timer.
 - If Jev errors, times out or answers `unclear`, the kiosk keeps asking for a recapture.
 - Report the initial outcome time and the Jev step time separately, as for AWS Face Liveness.
 
@@ -32,17 +32,13 @@ Verify ──► local pipeline (< 2 s) ──► ALLOW / DENY ──► done
 
 Settings (environment variables): `TYPESAFE_API_KEY`, `JEV_MODEL` (default `jev-latest`), `JEV_URL` (default `https://api.typesafe.ai/v1/systemone`), `JEV_TIMEOUT_MS` (default 1500).
 
-## Step 2 — kiosk integration (A and B, after C confirms latency)
+## Run the second check in the kiosk
 
-This changes `docs/api.md`, so all three agree first. Proposed addition:
+Start the backend with `TYPESAFE_API_KEY` set. The kiosk shows **Consent and run Jev** after a fresh local attempt with uncertain liveness and a matching identity. The button sends one crop to TypeSafe only after consent. The backend verifies the identity again and allows one check per attempt, within 60 seconds.
 
-| Method and path | Request | Response |
-| --- | --- | --- |
-| `POST /api/attempts/{attempt_id}/second_check` | — | `{attempt_id, method: "jev", jev_label, jev_live_probability, outcome, reason, second_check_ms}` |
+A strong spoof result can deny the second check. A result that looks live still asks for a recapture until the team measures how this model handles real attacks. The kiosk shows both timings, and the evaluator reports the second check separately from the original local decision.
 
-- **A:** In `app/main.py`, take one fresh frame under the camera lock, require exactly one face and an SFace match at or above `MATCH_PASS` against the same participant (so nobody swaps in after the first check), call `face_crop_jpeg` and `JevClient.check`, then map `JevResult.outcome()` to the final outcome. Add `second_check` columns to the attempts table so `evaluate.py` can report them. Allow only one second check per attempt.
-- **New reason values to agree:** `second_check_passed` (ALLOW after Jev), `second_check_spoof` (DENY after Jev), `second_check_unavailable` (Jev error or timeout, stays REQUEST_VERIFICATION).
-- **B:** When an attempt returns `REQUEST_VERIFICATION` with `uncertain_liveness`, show "Running an additional check…", call the endpoint, then show the final outcome and both times.
+The extension adds `POST /api/attempts/{attempt_id}/second_check` with `{"consent": true}`, `jev_enabled` in health, and a nullable `second_check` result on saved attempts. The result has the Jev label, live probability, resolved model, separate outcome and reason, total time, and TypeSafe request time. The original outcome and timing stay intact. The key is only read by the backend, and local verification remains available without it.
 
 ## Privacy
 
