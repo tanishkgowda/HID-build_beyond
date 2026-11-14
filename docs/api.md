@@ -13,7 +13,7 @@ All three teammates build against this file. If anything here needs to change, a
 | Field | Allowed values |
 | --- | --- |
 | `outcome` | `ALLOW`, `REQUEST_VERIFICATION`, `DENY` |
-| `reason` | `live_match`, `spoof_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable`, `blink_required` |
+| `reason` | `live_match`, `spoof_detected`, `identity_mismatch`, `no_face`, `multiple_faces`, `poor_quality`, `uncertain_liveness`, `uncertain_match`, `deadline_exceeded`, `not_enrolled`, `camera_unavailable` |
 | `scenario` | `unlabeled`, `genuine`, `wrong_identity`, `print_photo`, `screen_photo`, `video_replay`, `poor_light` |
 
 ## Endpoints
@@ -64,11 +64,9 @@ All three teammates build against this file. If anything here needs to change, a
 
 ## Walk-up verification
 
-With the camera on, the kiosk uses presence to draw its face guide and starts one verification when a single face is in range. The operator selects the enrolled participant beforehand. The kiosk resets after an empty frame persists briefly. Opening Operator tools pauses automatic checks. The existing `click_to_render_ms` field measures attempt start to result for automatic and manual checks.
+With the camera on, the kiosk uses presence to draw its face guide and starts one verification when a single face is in range. The operator selects the enrolled participant beforehand. The kiosk resets after an empty frame persists briefly. Operator tools stay visible during automatic checks. While a capture or Jev request is in progress, the kiosk waits before starting another check. The existing `click_to_render_ms` field measures attempt start to result for automatic and manual checks.
 
-## Blink check
-
-Verification asks for one blink as soon as the check starts. A local Allow also requires an open → closed → open eye sequence on fresh frames. Missing blink evidence returns `REQUEST_VERIFICATION` with `blink_required` when passive liveness would otherwise pass or be uncertain. Jev is offered only after a blink when the local model is unsure about liveness and identity matches.
+Older saved attempts may have `blink_required` as their reason. New attempts use the three-frame rule above without a blink prompt.
 
 ## Deadlines
 

@@ -31,14 +31,14 @@
 .layout {
   gap: clamp(16px, 2.4vw, 32px);
   grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr);
-  grid-template-areas: 'camera control' 'operator operator';
+  grid-template-areas: 'camera control' 'attempts attempts';
 }
 
 .entry-view {
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  aspect-ratio: 4 / 3;
+  height: clamp(300px, 40vw, 540px);
   border-radius: 18px;
   color: white;
   background: #081728;
@@ -152,31 +152,34 @@
   align-self: start;
 }
 
-.kiosk-instructions { padding: clamp(20px, 3vw, 38px); }
-.kiosk-label {
-  color: var(--text-2);
-  font-size: 12px;
-  letter-spacing: .105em;
-  font-weight: 650;
-  text-transform: uppercase;
+.kiosk-instructions { padding: clamp(16px, 2.1vw, 27px); gap: 15px; }
+
+.console-head,
+.console-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
-.kiosk-person {
-  display: block;
-  overflow-wrap: anywhere;
-  margin: -8px 0 6px;
-  font: 700 clamp(30px, 4vw, 52px)/.98 var(--display-face);
+
+.console-head h2 {
+  font: 700 clamp(26px, 3vw, 34px)/1 var(--display-face);
 }
-.kiosk-welcome {
+
+.enrollment-form {
   display: grid;
-  gap: 10px;
-  padding: 18px 0 10px;
-  border-top: 1px solid var(--border);
+  gap: 6px;
 }
-.kiosk-welcome strong {
-  max-width: 16ch;
-  font: 700 clamp(25px, 3vw, 38px)/1.02 var(--display-face);
+
+.enrollment-form > label {
+  font-size: 13px;
+  font-weight: 600;
 }
-.kiosk-welcome p { color: var(--text-2); }
+
+.enrollment-form .input-row > input { min-width: 0; }
+.console-action { justify-content: flex-start; }
+.console-action .hint { flex: 1 1 110px; }
 
 .kiosk-instructions .outcome {
   padding: clamp(14px, 2vw, 24px);
@@ -187,26 +190,19 @@
 }
 .kiosk-instructions .outcome-icon { width: 34px; height: 34px; }
 
-.operator-panel {
-  grid-area: operator;
-  min-width: 0;
-  display: grid;
-  gap: 16px;
-}
-.operator-settings .section-head { flex-wrap: wrap; gap: 12px; }
-.operator-settings .section-body { max-width: 540px; }
+.attempts-panel { border-radius: 14px; overflow: hidden; }
 
 @media (max-width: 760px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'camera' 'control' 'operator';
+    grid-template-areas: 'camera' 'control' 'attempts';
   }
 }
 @media (max-width: 420px) {
   .app { padding: 14px; }
   .page-header { gap: 10px; }
   .header-actions { flex-wrap: wrap; }
-  .entry-view { border-radius: 12px; }
+  .entry-view { height: auto; aspect-ratio: 4 / 3; border-radius: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .tracking-ring { transition: none; }

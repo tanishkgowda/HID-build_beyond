@@ -300,7 +300,7 @@ def markdown(report, source, sweeps=None):
     w(f"| Rendered within {UI_DEADLINE_MS} ms | {frac(labeled['within_ui_deadline'], labeled['client_timed'])} |")
     w(f"| Server deadline misses | {frac(labeled['server_deadline_missed'], labeled['n'])} |")
     w(f"| UI deadline misses | {frac(labeled['ui_deadline_missed'], labeled['n'])} |")
-    w(f"| Capture retries (face, lighting or blink) | "
+    w(f"| Capture retries | "
       f"{frac(labeled['capture_retries'], labeled['n'])} |\n")
 
     if report["jev_second_checks"]:

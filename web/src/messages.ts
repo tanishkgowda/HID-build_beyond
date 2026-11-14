@@ -20,7 +20,7 @@ export const REASON_MESSAGE: Record<Reason, string> = {
   uncertain_match: 'We could not confirm your identity. Remove a hat or sunglasses, face the camera and try again.',
   deadline_exceeded: 'That took too long. Please try again.',
   not_enrolled: 'This person is not enrolled yet. Enroll first, then verify.',
-  blink_required: 'No blink detected. Look straight ahead and blink once as soon as the check starts.',
+  blink_required: 'This earlier check needed another capture.',
   camera_unavailable: 'The camera is not running. Press Start camera, then try again.',
 };
 

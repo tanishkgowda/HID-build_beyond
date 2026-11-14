@@ -117,15 +117,6 @@ class Camera:
             after = timestamp + FRAME_INTERVAL_SECONDS
         return frames
 
-    def fresh_frames(self, deadline):
-        after = monotonic()
-        while True:
-            try:
-                after, frame = self._next(after, deadline)
-            except TimeoutError:
-                return
-            yield frame
-
     def preview(self):
         after = 0
         while self.running:

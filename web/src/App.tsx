@@ -80,7 +80,6 @@ export default function App() {
   const [previewNonce, setPreviewNonce] = useState(0);
   const [previewFailed, setPreviewFailed] = useState(false);
   const [presence, setPresence] = useState<Presence | null>(null);
-  const [operatorOpen, setOperatorOpen] = useState(false);
   const arrival = useRef({ seen: 0, emptySince: null as number | null, checked: false });
 
   // Participants and enrollment
@@ -187,7 +186,7 @@ export default function App() {
 
   const enroll = async () => {
     const name = enrollName.trim();
-    if (!name || enrolling || verifying || jevBusy || !cameraRunning) return;
+    if (!name || enrolling || verifying || serverBusy || jevBusy || cameraBusy || !cameraRunning) return;
     setEnrolling(true);
     setEnrollNote(null);
     try {
@@ -332,7 +331,7 @@ export default function App() {
         } else {
           state.emptySince = null;
           state.seen = next.ready ? state.seen + 1 : 0;
-          if (state.seen >= 2 && !state.checked && !operatorOpen && selectedId &&
+          if (state.seen >= 2 && !state.checked && selectedId &&
               document.visibilityState === 'visible') {
             void verify();
             return;
@@ -352,7 +351,7 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [cameraRunning, previewFailed, health?.models_loaded, selectedId, verifying, serverBusy,
-    enrolling, jevBusy, cameraBusy, operatorOpen, verify]);
+    enrolling, jevBusy, cameraBusy, verify]);
 
   // Click-to-render timing. The layout effect runs after React has written the
   // outcome to the DOM. The rAF callback runs at the start of the next frame,
@@ -421,11 +420,11 @@ export default function App() {
   const instruction = previewFailed ? 'Camera preview unavailable'
     : !cameraRunning ? 'Start the camera to begin'
     : enrolling ? 'Look straight ahead'
-    : verifying ? 'Blink once now'
+    : verifying ? 'Hold still for verification'
     : jevBusy ? 'Hold still for the second check'
     : presence && presence.count > 1 ? 'One person at a time'
-    : operatorOpen ? 'Automatic verification paused'
     : shown && presence?.count === 1 ? (displayOutcome === 'ALLOW' ? 'You may proceed' : 'Step away to reset')
+    : !health?.models_loaded ? 'Waiting for the verification service'
     : !selectedId ? 'Enroll or select a participant'
     : presence?.face && !presence.ready ? 'Move closer and center your face'
     : 'Step into view and look straight ahead';
@@ -445,10 +444,7 @@ export default function App() {
         </div>
         <div className="header-actions">
           <StatusLine health={health} error={healthError} cameraRunning={cameraRunning} />
-          <button className="btn btn-secondary" aria-expanded={operatorOpen} aria-controls="operator-tools"
-            onClick={() => setOperatorOpen((open) => !open)}>
-            {operatorOpen ? 'Close operator tools' : 'Operator tools'}
-          </button>
+          <ThemeToggle />
         </div>
       </header>
 
@@ -471,7 +467,11 @@ export default function App() {
               setPreviewNonce((nonce) => nonce + 1);
             }} />
           <div className="camera-controls">
-            <span>{operatorOpen ? 'Operator mode' : 'Automatic verification'}</span>
+            <label className="field-inline">
+              <span>Camera device</span>
+              <input type="number" min={0} max={255} value={deviceIndex} disabled={cameraRunning || cameraBusy}
+                onChange={(e) => setDeviceIndex(Math.max(0, Math.min(255, Math.trunc(Number(e.target.value) || 0))))} />
+            </label>
             <button className={`btn ${cameraRunning ? 'btn-secondary' : 'btn-primary'}`}
               onClick={cameraRunning ? stopCamera : startCamera}
               disabled={cameraBusy || verifying || serverBusy || enrolling || jevBusy}>
@@ -483,18 +483,46 @@ export default function App() {
 
         <section className="surface control-panel" aria-label="Verification">
           <div className="section-body stack kiosk-instructions">
-            <p className="kiosk-label">{selectedId ? 'Verifying for' : 'Verification'}</p>
-            <h2 className="kiosk-person">{selectedId ? nameOf(selectedId) : 'Select a participant'}</h2>
-            {!selectedId && (
-              <button className="btn btn-secondary" onClick={() => setOperatorOpen(true)}>Set up participant</button>
-            )}
-            {!shown && !verifying && (
-              <div className="kiosk-welcome" aria-live="polite">
-                <strong>{instruction}</strong>
-                {cameraRunning && selectedId && !operatorOpen && (presence?.count ?? 0) < 2 &&
-                  <p>Blink once when prompted.</p>}
+            <div className="console-head">
+              <h2>Verification</h2>
+              <span className={`badge ${cameraRunning && health?.models_loaded && selectedId && !previewFailed
+                ? 'badge-success' : 'badge-neutral'}`}>Auto verify</span>
+            </div>
+
+            <div className="field">
+              <label htmlFor="participant">Selected participant</label>
+              <select
+                id="participant"
+                value={selectedId}
+                onChange={(e) => setSelectedId(e.target.value)}
+                disabled={verifying || serverBusy || enrolling || jevBusy || participants.length === 0}
+              >
+                {participants.length === 0 && <option value="">No one enrolled yet</option>}
+                {participants.map((p) => (
+                  <option key={p.participant_id} value={p.participant_id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <form className="enrollment-form" onSubmit={(e) => { e.preventDefault(); void enroll(); }}>
+              <label htmlFor="enroll-name">Enroll a new person</label>
+              <div className="input-row">
+                <input id="enroll-name" type="text" placeholder="Full name" value={enrollName}
+                  onChange={(e) => setEnrollName(e.target.value)}
+                  disabled={enrolling || verifying || serverBusy || jevBusy}
+                  aria-label="Name to enroll" maxLength={100} />
+                <button className="btn btn-secondary" type="submit"
+                  disabled={enrolling || verifying || serverBusy || jevBusy || !cameraRunning || cameraBusy || !enrollName.trim()}>
+                  {enrolling ? 'Enrolling…' : 'Enroll'}
+                </button>
               </div>
-            )}
+              {enrollNote && <p className={enrollNote.ok ? 'note note-ok' : 'note note-bad'} role="status">{enrollNote.text}</p>}
+            </form>
+
+            <div className="console-action">
+              <button className="btn btn-primary" disabled={!readyForRetry} onClick={verify}>Verify manually</button>
+              {!shown && !verifying && <p className="hint">{instruction}</p>}
+            </div>
             <OutcomeCard shown={shown} verifying={verifying} onLabel={labelScenario} />
             {shown?.attempt?.second_check && (
               <div className="stack" aria-live="polite">
@@ -517,93 +545,21 @@ export default function App() {
                 </button>
               </div>
             )}
-            {shown && displayOutcome === 'REQUEST_VERIFICATION' && (
-              <button className="btn btn-secondary" disabled={!readyForRetry} onClick={verify}>Try again</button>
-            )}
           </div>
         </section>
 
-        {operatorOpen && (
-          <section className="operator-panel" id="operator-tools" aria-label="Operator tools">
-            <div className="surface operator-settings">
-              <div className="section-head"><h2>Operator tools</h2><ThemeToggle /></div>
-              <div className="section-body stack">
-                <div className="field">
-                  <label htmlFor="participant">Selected participant</label>
-                  <select
-                    id="participant"
-                    value={selectedId}
-                    onChange={(e) => setSelectedId(e.target.value)}
-                    disabled={verifying || serverBusy || enrolling || jevBusy || participants.length === 0}
-                  >
-                    {participants.length === 0 && <option value="">No one enrolled yet</option>}
-                    {participants.map((p) => (
-                      <option key={p.participant_id} value={p.participant_id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <label className="field-inline">
-                  <span>Camera device</span>
-                  <input type="number" min={0} max={255} value={deviceIndex} disabled={cameraRunning || cameraBusy}
-                    onChange={(e) => setDeviceIndex(Math.max(0, Math.min(255, Math.trunc(Number(e.target.value) || 0))))} />
-                </label>
-                <button className="btn btn-secondary" disabled={!readyForRetry} onClick={verify}>Verify manually</button>
-              </div>
-              <details className="enroll">
-                <summary>
-                  <span>Enroll a new person</span>
-                  <svg className="chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-                    <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </summary>
-                <div className="enroll-body">
-                  <div className="input-row">
-                    <input
-                      type="text"
-                      placeholder="Full name"
-                      value={enrollName}
-                      onChange={(e) => setEnrollName(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && void enroll()}
-                      disabled={enrolling || verifying || serverBusy || jevBusy}
-                      aria-label="Name to enroll"
-                    />
-                    <button
-                      className="btn btn-secondary"
-                      onClick={enroll}
-                      disabled={enrolling || verifying || serverBusy || jevBusy || !cameraRunning || !enrollName.trim()}
-                    >
-                      {enrolling ? 'Enrolling…' : 'Enroll'}
-                    </button>
-                  </div>
-                  <p className="hint">
-                    {cameraRunning
-                      ? 'Look at the camera. Several frames are captured and checked for liveness.'
-                      : 'Start the camera to enroll.'}
-                  </p>
-                  {enrollNote && (
-                    <p className={enrollNote.ok ? 'note note-ok' : 'note note-bad'}>{enrollNote.text}</p>
-                  )}
-                </div>
-              </details>
-            </div>
-
-            <section className="surface attempts-panel" aria-label="Recent attempts">
-              <div className="section-head">
-                <h2>
-                  Recent attempts
-                  {attempts.length > 0 && <span className="count">{attempts.length}</span>}
-                </h2>
-                <button className="btn btn-secondary btn-sm" onClick={() => void refreshAttempts()}>
-                  Refresh
-                </button>
-              </div>
-              <AttemptsTable attempts={attempts} nameOf={nameOf} onLabel={labelScenario} />
-            </section>
-          </section>
-        )}
+        <section className="surface attempts-panel" aria-label="Recent attempts">
+          <div className="section-head">
+            <h2>
+              Recent attempts
+              {attempts.length > 0 && <span className="count">{attempts.length}</span>}
+            </h2>
+            <button className="btn btn-secondary btn-sm" onClick={() => void refreshAttempts()}>
+              Refresh
+            </button>
+          </div>
+          <AttemptsTable attempts={attempts} nameOf={nameOf} onLabel={labelScenario} />
+        </section>
       </main>
     </div>
   );
@@ -680,7 +636,7 @@ function OutcomeCard(props: {
           <span className="spinner" aria-hidden="true" />
           <div className="outcome-title">Checking…</div>
         </div>
-        <p className="outcome-msg">Look straight at the camera and blink once now.</p>
+        <p className="outcome-msg">Look straight at the camera.</p>
       </div>
     );
   }
